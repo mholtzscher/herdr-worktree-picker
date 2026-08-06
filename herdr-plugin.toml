@@ -1,6 +1,6 @@
 id = "herdr-worktree-picker"
 name = "Herdr Worktree Picker"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.8.0"
 description = "Create worktrees from local or remote branches"
 platforms = ["linux", "macos"]
