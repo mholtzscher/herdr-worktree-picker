@@ -8,9 +8,11 @@ The picker opens in a popup, supports type-to-filter branch search, and can refr
 
 Requires Herdr 0.8.0 or newer and a Rust toolchain:
 
+<!-- x-release-please-start-version -->
 ```sh
 herdr plugin install mholtzscher/herdr-worktree-picker --ref v0.3.2
 ```
+<!-- x-release-please-end -->
 
 ## Configure
 
@@ -48,14 +50,14 @@ The picker identifies the current branch and branches already checked out in oth
 
 ## Releasing
 
-Push conventional commits to `main` to release automatically after tests pass:
+Release Please maintains a release PR from conventional commits on `main`:
 
-- `fix:`, `perf:`, or `revert:` creates a patch release.
+- `fix:` creates a patch release.
 - `feat:` creates a minor release.
 - A `!` after the type/scope or a `BREAKING CHANGE:` footer creates a major release.
 - Other commit types do not create a release.
 
-The release workflow updates all version files, commits the bump, tags it, and publishes generated GitHub release notes. Run `python3 scripts/prepare-release.py --dry-run` locally to preview the next release.
+Merging the release PR updates the Cargo, plugin, and README versions, creates the tag, and publishes the GitHub release.
 
 ## License
 
