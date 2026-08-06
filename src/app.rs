@@ -90,8 +90,11 @@ impl BaseRef {
         }
     }
 
-    fn value(&self) -> String {
-        self.label().to_owned()
+    fn value(&self, repo: &std::path::Path) -> Result<String, String> {
+        match self {
+            Self::Head => git::resolve_head(repo),
+            Self::Local(name) | Self::Remote(name) => Ok(name.clone()),
+        }
     }
 }
 
@@ -351,9 +354,16 @@ impl App {
                     self.error = Some(error);
                     return;
                 }
+                let base = match base.value(&self.repo) {
+                    Ok(base) => base,
+                    Err(error) => {
+                        self.error = Some(error);
+                        return;
+                    }
+                };
                 let request = CreateRequest {
                     branch: self.branch_name.clone(),
-                    base: Some(base.value()),
+                    base: Some(base),
                 };
                 self.start_create(request);
             }

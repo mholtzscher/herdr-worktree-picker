@@ -133,6 +133,10 @@ pub(crate) fn fetch_all(repo: &Path) -> Result<Vec<Branch>, String> {
     load_branches(repo)
 }
 
+pub(crate) fn resolve_head(repo: &Path) -> Result<String, String> {
+    run_git(repo, &["rev-parse", "HEAD"])
+}
+
 pub(crate) fn validate_branch_name(repo: &Path, name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("Branch name is required".into());
@@ -372,6 +376,36 @@ mod tests {
                 branch: "feature/auth".into(),
                 base: None,
             })
+        );
+    }
+
+    #[test]
+    fn resolves_head_from_the_given_checkout() {
+        let Some(repo) = repo() else {
+            return;
+        };
+        git(repo.path(), &["branch", "feature/other"]);
+        let worktree = repo.path().join("other-worktree");
+        git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                worktree.to_str().unwrap(),
+                "feature/other",
+            ],
+        );
+        fs::write(repo.path().join("second"), "content").unwrap();
+        git(repo.path(), &["add", "second"]);
+        git(repo.path(), &["commit", "-m", "second"]);
+
+        assert_eq!(
+            resolve_head(&worktree).unwrap(),
+            run_git(repo.path(), &["rev-parse", "feature/other"]).unwrap()
+        );
+        assert_ne!(
+            resolve_head(&worktree).unwrap(),
+            resolve_head(repo.path()).unwrap()
         );
     }
 

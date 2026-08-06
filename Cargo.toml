@@ -1,6 +1,6 @@
 [package]
 name = "herdr-worktree-picker"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "Create Herdr worktrees from local or remote branches"
 license = "MIT"
