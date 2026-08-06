@@ -269,7 +269,11 @@ mod tests {
         assert!(status.success(), "git {args:?} failed");
     }
 
-    fn repo() -> TempDir {
+    fn repo() -> Option<TempDir> {
+        if Command::new("git").arg("--version").status().is_err() {
+            return None;
+        }
+
         let repo = TempDir::new().unwrap();
         git(repo.path(), &["init", "-b", "main"]);
         git(repo.path(), &["config", "user.email", "test@example.com"]);
@@ -277,12 +281,14 @@ mod tests {
         fs::write(repo.path().join("file"), "content").unwrap();
         git(repo.path(), &["add", "file"]);
         git(repo.path(), &["commit", "-m", "initial"]);
-        repo
+        Some(repo)
     }
 
     #[test]
     fn loads_current_remote_and_checked_out_branches() {
-        let repo = repo();
+        let Some(repo) = repo() else {
+            return;
+        };
         git(repo.path(), &["branch", "feature/other"]);
         git(
             repo.path(),
@@ -371,7 +377,9 @@ mod tests {
 
     #[test]
     fn validates_new_branch_names_and_existing_names() {
-        let repo = repo();
+        let Some(repo) = repo() else {
+            return;
+        };
         assert!(validate_new_branch_name(repo.path(), "feature/new").is_ok());
         assert!(validate_new_branch_name(repo.path(), "bad name").is_err());
         assert!(validate_new_branch_name(repo.path(), "main").is_err());

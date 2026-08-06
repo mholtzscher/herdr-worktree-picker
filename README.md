@@ -9,7 +9,7 @@ The picker opens in a popup, supports type-to-filter branch search, and can refr
 Requires Herdr 0.8.0 or newer and a Rust toolchain:
 
 ```sh
-herdr plugin install mholtzscher/herdr-worktree-picker --ref v0.3.0
+herdr plugin install mholtzscher/herdr-worktree-picker --ref v0.3.1
 ```
 
 ## Configure
