@@ -46,6 +46,17 @@ When creating a branch, the search field becomes the branch-name field and its e
 
 The picker identifies the current branch and branches already checked out in other worktrees. It blocks unsafe remote-name collisions before asking Herdr to create the worktree.
 
+## Releasing
+
+Push conventional commits to `main` to release automatically after tests pass:
+
+- `fix:`, `perf:`, or `revert:` creates a patch release.
+- `feat:` creates a minor release.
+- A `!` after the type/scope or a `BREAKING CHANGE:` footer creates a major release.
+- Other commit types do not create a release.
+
+The release workflow updates all version files, commits the bump, tags it, and publishes generated GitHub release notes. Run `python3 scripts/prepare-release.py --dry-run` locally to preview the next release.
+
 ## License
 
 MIT
