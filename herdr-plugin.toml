@@ -5,11 +5,14 @@ min_herdr_version = "0.8.0"
 description = "Create worktrees from local or remote branches"
 platforms = ["linux", "macos"]
 
+[[build]]
+command = ["cargo", "build", "--release"]
+
 [[actions]]
 id = "open"
 title = "Pick worktree base"
 contexts = ["workspace"]
-command = ["./bin/herdr-worktree-picker", "open"]
+command = ["./target/release/herdr-worktree-picker", "open"]
 
 [[panes]]
 id = "picker"
@@ -17,4 +20,4 @@ title = "Pick worktree base"
 placement = "popup"
 width = "80%"
 height = "80%"
-command = ["./bin/herdr-worktree-picker", "picker"]
+command = ["./target/release/herdr-worktree-picker", "picker"]

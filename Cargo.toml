@@ -2,7 +2,9 @@
 name = "herdr-worktree-picker"
 version = "0.2.0"
 edition = "2021"
+description = "Create Herdr worktrees from local or remote branches"
 license = "MIT"
+repository = "https://github.com/mholtzscher/herdr-worktree-picker"
 
 [dependencies]
 crossterm = "0.28"
