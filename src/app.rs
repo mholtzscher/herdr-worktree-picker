@@ -93,11 +93,11 @@ impl Branch {
     }
 
     pub(crate) fn annotation(&self) -> String {
-        if self.is_current {
-            return "current".into();
-        }
         if let Some(path) = &self.checked_out_at {
             return format!("at {}", path.display());
+        }
+        if self.is_current {
+            return "current".into();
         }
         if self.committer_time <= 0 {
             return String::new();
@@ -298,8 +298,9 @@ impl App {
     pub(crate) fn intent_enabled(&self, intent: Intent) -> bool {
         match intent {
             Intent::NewFromHead => matches!(self.head, HeadState::Branch { .. }),
-            Intent::OpenExisting => true,
-            Intent::NewFromBase => !matches!(self.head, HeadState::Unborn),
+            Intent::OpenExisting | Intent::NewFromBase => {
+                !matches!(self.head, HeadState::Unborn)
+            }
         }
     }
 
@@ -1087,8 +1088,8 @@ mod tests {
     fn unborn_disables_all_creation_outcomes() {
         let mut app = app(HeadState::Unborn, default_branches());
         assert!(!app.intent_enabled(Intent::NewFromHead));
+        assert!(!app.intent_enabled(Intent::OpenExisting));
         assert!(!app.intent_enabled(Intent::NewFromBase));
-        assert!(app.intent_enabled(Intent::OpenExisting));
         app.intent = Intent::NewFromHead;
         app.handle_key(key(KeyCode::Enter));
         assert_eq!(app.mode, Mode::Intent);
@@ -1097,8 +1098,15 @@ mod tests {
         assert_eq!(app.mode, Mode::Intent);
         app.intent = Intent::OpenExisting;
         app.handle_key(key(KeyCode::Enter));
-        assert_eq!(app.mode, Mode::ExistingPicker);
+        assert_eq!(app.mode, Mode::Intent);
         assert!(app.head_label().contains("No commits yet"));
+    }
+
+    #[test]
+    fn current_checkout_annotation_uses_absolute_path() {
+        let mut branch = current("main");
+        branch.checked_out_at = Some(PathBuf::from("/code/repo"));
+        assert_eq!(branch.annotation(), "at /code/repo");
     }
 
     #[test]

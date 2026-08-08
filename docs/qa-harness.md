@@ -62,8 +62,9 @@ mkdir -p /tmp/wtqa && cd /tmp/wtqa && rm -rf repo remote.git
 git init -b main repo && cd repo
 git config user.email qa@test && git config user.name QA
 echo initial > README.md && git add README.md && git commit -m initial
-git branch feature/auth feature/payments release/2.4 release/2.4.1
-git checkout -b feature/payments && echo p > payments.txt
+git branch feature/auth && git branch feature/payments
+git branch release/2.4 && git branch release/2.4.1
+git checkout feature/payments && echo p > payments.txt
 git add payments.txt && git commit -m payments && git checkout main
 echo m >> README.md && git commit -am main
 cd /tmp/wtqa && git clone --bare repo remote.git && cd repo
