@@ -1,8 +1,8 @@
 # herdr-worktree-picker
 
-A small [Herdr](https://herdr.dev) plugin for creating worktrees from local branches, remote branches, or the current HEAD.
+A small [Herdr](https://herdr.dev) plugin for creating and focusing worktrees from local branches, remote branches, the current `HEAD`, or another branch as the base.
 
-The picker opens in a popup, supports type-to-filter branch search, and can refresh remote branches with `Ctrl-R`. Existing branches can be checked out directly or used as the base for a new branch.
+The picker opens in a popup and starts with an intent menu: create a new branch from the current `HEAD`, open an existing branch, or create a new branch from another base. Every later screen has one purpose — search for a branch, search for a base, enter a branch name, resolve a remote-name conflict, or show creation progress — and each path remembers its own search, selection, and name draft while the popup is open.
 
 ## Install
 
@@ -22,8 +22,8 @@ Bind the plugin action in `~/.config/herdr/config.toml`:
 [[keys.command]]
 key = "prefix+shift+g"
 type = "plugin_action"
-command = "herdr-worktree-picker.open"
-description = "create worktree from branch"
+command = "herdr-worktree-picker.create"
+description = "create worktree"
 ```
 
 Reload Herdr after editing the configuration:
@@ -32,21 +32,51 @@ Reload Herdr after editing the configuration:
 herdr server reload-config
 ```
 
+### Upgrading from 0.3.x
+
+The public action ID changed from `herdr-worktree-picker.open` to `herdr-worktree-picker.create`. Replace the old keybinding:
+
+```diff
+-command = "herdr-worktree-picker.open"
+-description = "create worktree from branch"
++command = "herdr-worktree-picker.create"
++description = "create worktree"
+```
+
 ## Use
 
-Open the picker from a pane inside a Git repository. Type to filter local and remote branches.
+Open the picker from a pane inside a Git repository.
+
+**1. Choose an outcome.** The default selection is *Open an existing branch*; `Enter` continues.
 
 | Key | Action |
 |---|---|
-| `↑` / `↓` | Select a branch |
-| `Enter` | Open a worktree for the selected branch |
-| `Ctrl-N` | Use the selected branch as the base for a new branch |
-| `Ctrl-R` | Fetch and prune all remotes |
-| `Esc` | Go back or close the picker |
+| `↑` / `↓` | Choose an outcome |
+| `Enter` | Continue |
+| `Esc` | Close |
 
-When creating a branch, the search field becomes the branch-name field and its existing text is selected as an editable draft. Type to replace it, press `Ctrl-U` to clear it, or press `Esc` to restore the original search. A valid search with no matches can also be reused as a new branch name from `HEAD`.
+The current branch is shown. On a detached `HEAD`, *New branch from current HEAD* is disabled; with no commits yet, all creation outcomes are disabled until you create a commit.
 
-The picker identifies the current branch and branches already checked out in other worktrees. It blocks unsafe remote-name collisions before asking Herdr to create the worktree.
+**2. Follow the chosen path.**
+
+*New branch from current HEAD* — enter an exact branch name. `Enter` validates it with Git, resolves `HEAD` on submit, and creates the worktree.
+
+*Open an existing branch* — search local and remote branches. `Enter` opens an available local branch, or creates a local branch from a remote while tracking that exact remote. Branches checked out in another worktree stay visible but disabled. When a remote's derived local name already exists without tracking that remote, a conflict screen asks you to choose a different local name — the unrelated local branch is never opened.
+
+*New branch from another base* — pick a base (the current branch is excluded), then enter a branch name. A remote base creates a local branch that tracks that exact remote.
+
+| Key | Screen | Action |
+|---|---|---|
+| `↑` / `↓` | Picker / conflict | Move selection (skips disabled rows) |
+| `Enter` | Picker | Open the branch or select the base |
+| `Ctrl-R` | Picker | Fetch and prune all remotes (asynchronous) |
+| `Backspace` / `Ctrl-U` | Search or name | Delete the last character / clear the field |
+| `Enter` | Name | Validate the exact input and create |
+| `Esc` | Any screen | Back one step (or close from the intent menu) |
+
+While a worktree is created, the popup shows the resolved branch and base and ignores all keys — `Esc` cannot cancel a partially completed Herdr command. On success the worktree is focused, a best-effort notification is shown, and the popup closes. If the worktree was created but the remote upstream could not be verified or repaired, the plugin warns and closes without offering a duplicate retry.
+
+The picker identifies the current branch and branches already checked out in other worktrees, and blocks unsafe remote-name collisions before asking Herdr to create the worktree.
 
 ## Releasing
 

@@ -391,6 +391,7 @@
     let intentSelected = 1;
     let conflictSelected = 0;
     let selectedBase = 'release/2.4';
+    let creatingContext = null;
     let inlineError = '';
     let fetchContext = 'existing';
     let fetchTimer;
@@ -400,6 +401,10 @@
       { name: 'Open an existing branch' },
       { name: 'New branch from another base' }
     ];
+
+    function intentDisabled(index) {
+      return (state === 'unborn' && index !== 1) || (state === 'detached' && index === 0);
+    }
 
     function esc(text) {
       return String(text).replace(/[&<>'"]/g, character => ({
@@ -481,7 +486,7 @@
       setHead('Create worktree', 'Start');
       const rows = intentRows.map((row, index) => ({
         ...row,
-        disabled: unborn || (detached && index === 0)
+        disabled: intentDisabled(index)
       }));
       if (!actionable(rows, intentSelected)) intentSelected = rows.findIndex(row => !row.disabled);
       body.replaceChildren(renderRows(rows, intentSelected, index => {
@@ -493,7 +498,7 @@
       else if (detached) context.innerHTML = '<strong>Current HEAD: detached</strong>New branch from current HEAD is unavailable. Existing branches and other bases remain available.';
       else context.innerHTML = '<span>Current branch:</span> <strong>main</strong>';
       body.append(context);
-      setFooter(unborn ? '<kbd>Esc</kbd> close' : '<kbd>↑↓</kbd> choose · <kbd>Enter</kbd> continue · <kbd>Esc</kbd> close');
+      setFooter('<kbd>↑↓</kbd> choose · <kbd>Enter</kbd> continue · <kbd>Esc</kbd> close');
     }
 
     function renderPicker(kind, forcedStatus = '') {
@@ -570,7 +575,11 @@
 
     function renderCreating() {
       setHead('Creating worktree', 'Final');
-      body.innerHTML = '<div><span style="color:var(--muted)">Branch:</span> feature/payments</div><div><span style="color:var(--muted)">Base:</span> main (resolved HEAD)</div><div class="message success"><strong>Creating and focusing worktree…</strong>After success: verify exact upstream when required, notify best-effort, then close.</div>';
+      const context = creatingContext || { branch: 'feature/payments', base: null };
+      let html = `<div><span style="color:var(--muted)">Branch:</span> ${esc(context.branch)}</div>`;
+      if (context.base) html += `<div><span style="color:var(--muted)">Base:</span> ${esc(context.base)}</div>`;
+      html += '<div class="message success"><strong>Creating and focusing worktree…</strong>After success: verify exact upstream when required, notify best-effort, then close.</div>';
+      body.innerHTML = html;
       setFooter('Please wait · creation cannot be cancelled · popup closes when complete');
     }
 
@@ -610,7 +619,8 @@
     }
 
     function activate() {
-      if (state === 'intent') {
+      if (state === 'intent' || state === 'detached' || state === 'unborn') {
+        if (intentDisabled(intentSelected)) return;
         if (intentSelected === 0) setState('head-name');
         else if (intentSelected === 1) setState('existing');
         else setState('base');
@@ -619,7 +629,12 @@
         const selected = rows[memory.existing.selected];
         if (!selected || selected.disabled) return;
         if (selected.conflict) setState('conflict');
-        else setState('creating');
+        else {
+          creatingContext = selected.kind === 'REMOTE'
+            ? { branch: selected.name.split('/').slice(1).join('/'), base: selected.name }
+            : { branch: selected.name, base: null };
+          setState('creating');
+        }
       } else if (state === 'base') {
         const rows = normalizeSelection('base');
         const selected = rows[memory.base.selected];
@@ -632,6 +647,11 @@
         if (!value) { inlineError = 'Branch name is required.'; render(); return; }
         if (/\s|\.\./.test(value)) { inlineError = `fatal: “${value}” is not a valid branch name`; render(); return; }
         priorState = state === 'create-error' ? 'base-name' : state;
+        creatingContext = state === 'head-name'
+          ? { branch: value, base: 'main (current HEAD; resolved on create)' }
+          : state === 'conflict-name'
+            ? { branch: value, base: 'origin/feature/auth (tracks exact remote)' }
+            : { branch: value, base: `${selectedBase} (resolved on create)` };
         setState('creating');
       } else if (state === 'conflict') {
         setState(conflictSelected === 0 ? 'conflict-name' : 'existing');
@@ -647,8 +667,12 @@
     }
 
     function move(delta) {
-      if (state === 'intent') {
-        intentSelected = Math.max(0, Math.min(intentRows.length - 1, intentSelected + delta));
+      if (state === 'intent' || state === 'detached' || state === 'unborn') {
+        const enabled = [0, 1, 2].filter(index => !intentDisabled(index));
+        let position = enabled.indexOf(intentSelected);
+        if (position === -1) position = 0;
+        position = Math.max(0, Math.min(enabled.length - 1, position + delta));
+        intentSelected = enabled[position];
         render();
       } else if (state === 'existing' || state === 'fetching' || state === 'fetch-error') {
         const rows = filteredRows('existing');
@@ -683,7 +707,7 @@
         else if (state === 'conflict-name') memory.conflictName = '';
         inlineError = '';
         render();
-      } else if (event.ctrlKey && event.key.toLowerCase() === 'r' && ['existing', 'base', 'fetch-error'].includes(state)) {
+      } else if (event.ctrlKey && event.key.toLowerCase() === 'r' && ['existing', 'base', 'fetch-error', 'empty'].includes(state)) {
         event.preventDefault();
         const returnState = state === 'base' ? 'base' : 'existing';
         fetchContext = returnState;

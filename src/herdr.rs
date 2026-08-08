@@ -73,6 +73,20 @@ pub(crate) fn notify_created(herdr: &OsString, branch: &str) {
         .status();
 }
 
+pub(crate) fn notify_tracking_warning(herdr: &OsString, branch: &str, error: &str) {
+    let _ = Command::new(herdr)
+        .args([
+            "notification",
+            "show",
+            "Worktree created",
+            "--body",
+            &format!("{branch} was created, but upstream configuration failed: {error}"),
+            "--sound",
+            "done",
+        ])
+        .status();
+}
+
 pub(crate) fn json(herdr: &OsString, args: &[&str]) -> Result<Value, String> {
     let output = Command::new(herdr)
         .args(args)
