@@ -8,7 +8,7 @@ use std::{
 use serde_json::Value;
 
 use crate::{
-    app::{Branch, BranchKind, CreateRequest, OpenBlocker},
+    app::{Branch, BranchKind, CreateRequest, HeadState, OpenBlocker},
     herdr,
 };
 
@@ -45,6 +45,21 @@ pub(crate) fn find_repo(herdr_bin: &OsString) -> Result<PathBuf, String> {
     let output = run_git(Path::new(&cwd), &["rev-parse", "--show-toplevel"])
         .map_err(|_| format!("No Git repository found for {cwd}."))?;
     Ok(PathBuf::from(output.trim()))
+}
+
+/// Distinguishes a named branch, a detached commit, and an unborn repository.
+/// `HEAD` must resolve to a commit before the symbolic-ref check runs.
+pub(crate) fn load_head(repo: &Path) -> Result<HeadState, String> {
+    if run_git(repo, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_err() {
+        return Ok(HeadState::Unborn);
+    }
+    match run_git(repo, &["symbolic-ref", "--quiet", "--short", "HEAD"]) {
+        Ok(name) => Ok(HeadState::Branch { name }),
+        Err(_) => {
+            let commit = run_git(repo, &["rev-parse", "HEAD"])?;
+            Ok(HeadState::Detached { commit })
+        }
+    }
 }
 
 pub(crate) fn load_branches(repo: &Path) -> Result<Vec<Branch>, String> {
@@ -122,10 +137,8 @@ pub(crate) fn load_branches(repo: &Path) -> Result<Vec<Branch>, String> {
             .then_with(|| left.name.cmp(&right.name))
     });
 
-    let mut branches = vec![Branch::new_action()];
-    branches.extend(local_branches);
-    branches.extend(remote_branches);
-    Ok(branches)
+    local_branches.extend(remote_branches);
+    Ok(local_branches)
 }
 
 pub(crate) fn fetch_all(repo: &Path) -> Result<Vec<Branch>, String> {
@@ -153,16 +166,11 @@ pub(crate) fn validate_new_branch_name(repo: &Path, name: &str) -> Result<(), St
     }
 }
 
-pub(crate) fn can_create_branch(repo: &Path, name: &str) -> bool {
-    validate_new_branch_name(repo, name).is_ok()
-}
-
+/// Resolves a remote-derived request. New local branches created from a remote
+/// keep that exact remote as both base and required upstream; a local branch is
+/// only opened when its upstream exactly equals the selected remote.
 pub(crate) fn plan_open(branch: &Branch, all: &[Branch]) -> Result<CreateRequest, OpenBlocker> {
     match branch.kind {
-        BranchKind::New => Ok(CreateRequest {
-            branch: String::new(),
-            base: Some("HEAD".into()),
-        }),
         BranchKind::Local => {
             if let Some(path) = &branch.checked_out_at {
                 return Err(OpenBlocker::AlreadyCheckedOut {
@@ -173,6 +181,7 @@ pub(crate) fn plan_open(branch: &Branch, all: &[Branch]) -> Result<CreateRequest
             Ok(CreateRequest {
                 branch: branch.name.clone(),
                 base: None,
+                upstream: None,
             })
         }
         BranchKind::Remote => {
@@ -187,6 +196,7 @@ pub(crate) fn plan_open(branch: &Branch, all: &[Branch]) -> Result<CreateRequest
                 None => Ok(CreateRequest {
                     branch: local_name.to_owned(),
                     base: Some(branch.name.clone()),
+                    upstream: Some(branch.name.clone()),
                 }),
                 Some(local) if local.upstream.as_deref() == Some(branch.name.as_str()) => {
                     if let Some(path) = &local.checked_out_at {
@@ -198,6 +208,7 @@ pub(crate) fn plan_open(branch: &Branch, all: &[Branch]) -> Result<CreateRequest
                     Ok(CreateRequest {
                         branch: local.name.clone(),
                         base: None,
+                        upstream: None,
                     })
                 }
                 Some(_) => Err(OpenBlocker::RemoteNameConflict {
@@ -207,6 +218,37 @@ pub(crate) fn plan_open(branch: &Branch, all: &[Branch]) -> Result<CreateRequest
             }
         }
     }
+}
+
+/// Verifies the local branch's upstream exactly matches the remote, repairing
+/// it with `git branch --set-upstream-to` when missing or different.
+pub(crate) fn verify_or_set_upstream(
+    repo: &Path,
+    local: &str,
+    remote: &str,
+) -> Result<(), String> {
+    if upstream_of(repo, local)?.as_deref() == Some(remote) {
+        return Ok(());
+    }
+    run_git(repo, &["branch", "--set-upstream-to", remote, local])?;
+    match upstream_of(repo, local)? {
+        Some(upstream) if upstream == remote => Ok(()),
+        _ => Err(format!(
+            "Could not set upstream of {local} to {remote} after repair"
+        )),
+    }
+}
+
+fn upstream_of(repo: &Path, local: &str) -> Result<Option<String>, String> {
+    let output = run_git(
+        repo,
+        &[
+            "for-each-ref",
+            "--format=%(upstream:short)",
+            &format!("refs/heads/{local}"),
+        ],
+    )?;
+    Ok((!output.is_empty()).then_some(output))
 }
 
 fn load_worktrees(repo: &Path) -> Result<HashMap<String, PathBuf>, String> {
@@ -289,6 +331,29 @@ mod tests {
     }
 
     #[test]
+    fn load_head_distinguishes_named_detached_and_unborn() {
+        let Some(repo) = repo() else {
+            return;
+        };
+        assert_eq!(
+            load_head(repo.path()).unwrap(),
+            HeadState::Branch {
+                name: "main".into()
+            }
+        );
+
+        git(repo.path(), &["checkout", "--detach"]);
+        let HeadState::Detached { commit } = load_head(repo.path()).unwrap() else {
+            panic!("expected detached HEAD");
+        };
+        assert_eq!(commit, run_git(repo.path(), &["rev-parse", "HEAD"]).unwrap());
+
+        let unborn = TempDir::new().unwrap();
+        git(unborn.path(), &["init", "-b", "main"]);
+        assert_eq!(load_head(unborn.path()).unwrap(), HeadState::Unborn);
+    }
+
+    #[test]
     fn loads_current_remote_and_checked_out_branches() {
         let Some(repo) = repo() else {
             return;
@@ -310,9 +375,9 @@ mod tests {
         );
 
         let branches = load_branches(repo.path()).unwrap();
-        assert_eq!(branches[0].kind, BranchKind::New);
-        assert_eq!(branches[1].name, "main");
-        assert!(branches[1].is_current);
+        assert_eq!(branches.len(), 3);
+        assert_eq!(branches[0].name, "main");
+        assert!(branches[0].is_current);
         assert_eq!(
             branches
                 .iter()
@@ -325,6 +390,45 @@ mod tests {
         assert!(branches
             .iter()
             .any(|branch| branch.name == "origin/feature/auth"));
+    }
+
+    #[test]
+    fn plans_local_open_without_base_or_upstream() {
+        let local = Branch {
+            kind: BranchKind::Local,
+            name: "feature/auth".into(),
+            upstream: None,
+            checked_out_at: None,
+            is_current: false,
+            committer_time: 0,
+        };
+        assert_eq!(
+            plan_open(&local, std::slice::from_ref(&local)),
+            Ok(CreateRequest {
+                branch: "feature/auth".into(),
+                base: None,
+                upstream: None,
+            })
+        );
+    }
+
+    #[test]
+    fn plans_checked_out_local_blocker() {
+        let local = Branch {
+            kind: BranchKind::Local,
+            name: "feature/auth".into(),
+            upstream: None,
+            checked_out_at: Some(PathBuf::from("/code/auth")),
+            is_current: false,
+            committer_time: 0,
+        };
+        assert_eq!(
+            plan_open(&local, std::slice::from_ref(&local)),
+            Err(OpenBlocker::AlreadyCheckedOut {
+                branch: "feature/auth".into(),
+                path: PathBuf::from("/code/auth"),
+            })
+        );
     }
 
     #[test]
@@ -355,6 +459,7 @@ mod tests {
             Ok(CreateRequest {
                 branch: "feature/auth".into(),
                 base: Some("origin/feature/auth".into()),
+                upstream: Some("origin/feature/auth".into()),
             })
         );
     }
@@ -375,8 +480,49 @@ mod tests {
             Ok(CreateRequest {
                 branch: "feature/auth".into(),
                 base: None,
+                upstream: None,
             })
         );
+    }
+
+    #[test]
+    fn plans_remote_derived_local_checked_out_blocker() {
+        let remote = Branch::remote("origin/feature/auth");
+        let local = Branch {
+            kind: BranchKind::Local,
+            name: "feature/auth".into(),
+            upstream: Some("origin/feature/auth".into()),
+            checked_out_at: Some(PathBuf::from("/code/auth")),
+            is_current: false,
+            committer_time: 0,
+        };
+        assert_eq!(
+            plan_open(&remote, &[remote.clone(), local]),
+            Err(OpenBlocker::AlreadyCheckedOut {
+                branch: "feature/auth".into(),
+                path: PathBuf::from("/code/auth"),
+            })
+        );
+    }
+
+    #[test]
+    fn excludes_symbolic_remote_refs() {
+        let Some(repo) = repo() else {
+            return;
+        };
+        git(
+            repo.path(),
+            &["update-ref", "refs/remotes/origin/feature/auth", "HEAD"],
+        );
+        git(
+            repo.path(),
+            &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/feature/auth"],
+        );
+        let branches = load_branches(repo.path()).unwrap();
+        assert!(!branches.iter().any(|branch| branch.name == "origin/HEAD"));
+        assert!(branches
+            .iter()
+            .any(|branch| branch.name == "origin/feature/auth"));
     }
 
     #[test]
@@ -417,5 +563,80 @@ mod tests {
         assert!(validate_new_branch_name(repo.path(), "feature/new").is_ok());
         assert!(validate_new_branch_name(repo.path(), "bad name").is_err());
         assert!(validate_new_branch_name(repo.path(), "main").is_err());
+    }
+
+    #[test]
+    fn verifies_matching_upstream_without_changes() {
+        let Some(repo) = repo() else {
+            return;
+        };
+        git(
+            repo.path(),
+            &["remote", "add", "origin", "https://example.invalid/repo.git"],
+        );
+        git(
+            repo.path(),
+            &["update-ref", "refs/remotes/origin/feature/auth", "HEAD"],
+        );
+        git(
+            repo.path(),
+            &["branch", "--set-upstream-to", "origin/feature/auth", "main"],
+        );
+        assert!(verify_or_set_upstream(repo.path(), "main", "origin/feature/auth").is_ok());
+        assert_eq!(
+            upstream_of(repo.path(), "main").unwrap().as_deref(),
+            Some("origin/feature/auth")
+        );
+    }
+
+    #[test]
+    fn repairs_missing_upstream_and_verifies() {
+        let Some(repo) = repo() else {
+            return;
+        };
+        git(repo.path(), &["branch", "feature/new"]);
+        git(
+            repo.path(),
+            &["remote", "add", "origin", "https://example.invalid/repo.git"],
+        );
+        git(
+            repo.path(),
+            &["update-ref", "refs/remotes/origin/feature/new", "HEAD"],
+        );
+        assert!(upstream_of(repo.path(), "feature/new").unwrap().is_none());
+        verify_or_set_upstream(repo.path(), "feature/new", "origin/feature/new").unwrap();
+        assert_eq!(
+            upstream_of(repo.path(), "feature/new").unwrap().as_deref(),
+            Some("origin/feature/new")
+        );
+    }
+
+    #[test]
+    fn repairs_different_upstream_to_exact_remote() {
+        let Some(repo) = repo() else {
+            return;
+        };
+        git(repo.path(), &["branch", "feature/new"]);
+        git(
+            repo.path(),
+            &["remote", "add", "origin", "https://example.invalid/repo.git"],
+        );
+        git(
+            repo.path(),
+            &["update-ref", "refs/remotes/origin/feature/new", "HEAD"],
+        );
+        git(
+            repo.path(),
+            &["update-ref", "refs/remotes/origin/other", "HEAD"],
+        );
+        git(
+            repo.path(),
+            &["branch", "--set-upstream-to", "origin/other", "feature/new"],
+        );
+        verify_or_set_upstream(repo.path(), "feature/new", "origin/feature/new").unwrap();
+        assert_eq!(
+            upstream_of(repo.path(), "feature/new").unwrap().as_deref(),
+            Some("origin/feature/new")
+        );
     }
 }

@@ -4,7 +4,7 @@ mod herdr;
 
 use std::{env, io, process::Command, time::Duration};
 
-use app::{App, BranchKind, Mode};
+use app::{App, BranchKind, Intent, Mode, Picker};
 use crossterm::{
     event::{self, Event},
     execute,
@@ -111,7 +111,7 @@ fn draw(frame: &mut Frame, app: &App) {
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(header_height(&app.mode)),
             Constraint::Min(5),
             Constraint::Length(3),
         ])
@@ -122,69 +122,112 @@ fn draw(frame: &mut Frame, app: &App) {
     draw_footer(frame, areas[2], app);
 }
 
+/// Header height per mode. Every screen fits one content row below the title
+/// except naming, which shows both the base and the editable name line.
+fn header_height(mode: &Mode) -> u16 {
+    if matches!(mode, Mode::Naming { .. }) {
+        4
+    } else {
+        3
+    }
+}
+
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let (title, line) = match &app.mode {
-        Mode::Browse => (
-            " Worktree branch ",
-            Line::from(vec![
-                Span::styled("Search: ", Style::default().fg(Color::DarkGray)),
-                Span::raw(&app.query),
-            ]),
+    let (title, lines) = match &app.mode {
+        Mode::Intent => (" Create worktree ", vec![Line::default()]),
+        Mode::ExistingPicker => (" Choose branch ", search_line(&app.existing.query)),
+        Mode::BasePicker => (" Choose base ", search_line(&app.base_picker.query)),
+        Mode::Naming { target } => (
+            " Branch name ",
+            vec![
+                Line::from(Span::styled(
+                    format!("Base: {}", app.naming_base_label(target)),
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(Span::raw(format!("Name: {}", app.name_draft(target)))),
+            ],
         ),
-        Mode::Naming { base } => {
-            let name = if app.name_draft_selected {
-                Span::styled(
-                    app.branch_name.as_str(),
-                    Style::default().bg(Color::Gray).fg(Color::Black),
-                )
-            } else {
-                Span::raw(app.branch_name.as_str())
-            };
-            (
-                " New branch ",
-                Line::from(vec![
-                    Span::styled(
-                        format!("New branch from {}: ", base.label()),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    name,
-                ]),
-            )
-        }
-        Mode::FatalError => (" Worktree picker error ", Line::default()),
+        Mode::RemoteConflict => (" Resolve local name conflict ", vec![Line::default()]),
+        Mode::Creating => (" Creating worktree ", vec![Line::default()]),
+        Mode::FatalError => (" Worktree creation error ", vec![Line::default()]),
     };
 
     frame.render_widget(
-        Paragraph::new(line).block(Block::default().title(title).borders(Borders::ALL)),
+        Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL)),
         area,
     );
 }
 
-fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
-    if app.mode == Mode::FatalError {
-        let message = app.error.as_deref().unwrap_or("Could not start the picker");
-        frame.render_widget(
-            Paragraph::new(vec![Line::from(""), Line::from(message)])
-                .block(Block::default().borders(Borders::ALL))
-                .wrap(Wrap { trim: true }),
-            area,
-        );
-        return;
-    }
+fn search_line(query: &str) -> Vec<Line<'_>> {
+    vec![Line::from(vec![
+        Span::styled("Search: ", Style::default().fg(Color::DarkGray)),
+        Span::raw(query),
+    ])]
+}
 
-    let indices = app.filtered_indices();
-    if indices.is_empty() {
-        let guidance = if app.query_can_create {
-            "Enter use as new branch from HEAD"
+fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
+    match &app.mode {
+        Mode::Intent => draw_intent_body(frame, area, app),
+        Mode::ExistingPicker => draw_picker_body(frame, area, app, Picker::Existing),
+        Mode::BasePicker => draw_picker_body(frame, area, app, Picker::Base),
+        Mode::Naming { .. } => {}
+        Mode::RemoteConflict => draw_conflict_body(frame, area, app),
+        Mode::Creating => draw_creating_body(frame, area, app),
+        Mode::FatalError => draw_fatal_body(frame, area, app),
+    }
+}
+
+fn draw_intent_body(frame: &mut Frame, area: Rect, app: &App) {
+    const OUTCOMES: [(Intent, &str); 3] = [
+        (Intent::NewFromHead, "New branch from current HEAD"),
+        (Intent::OpenExisting, "Open an existing branch"),
+        (Intent::NewFromBase, "New branch from another base"),
+    ];
+    let mut lines = Vec::new();
+    for (intent, label) in OUTCOMES {
+        let selected = intent == app.intent;
+        let enabled = app.intent_enabled(intent);
+        let style = if selected {
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD)
+        } else if enabled {
+            Style::default()
         } else {
-            "Change the search or refresh remotes"
+            Style::default().fg(Color::DarkGray)
         };
+        lines.push(Line::from(Span::styled(
+            format!("{} {label}", if selected { "›" } else { " " }),
+            style,
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        app.head_label(),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL)),
+        area,
+    );
+}
+
+fn draw_picker_body(frame: &mut Frame, area: Rect, app: &App, picker: Picker) {
+    let rows = app.picker_rows(picker);
+    let query = match picker {
+        Picker::Existing => &app.existing.query,
+        Picker::Base => &app.base_picker.query,
+    };
+
+    if rows.is_empty() {
+        let (message, hint) = empty_state_message(picker, query);
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
-                Line::from(format!("No branches match “{}”", app.query)),
+                Line::from(message),
                 Line::from(""),
-                Line::from(Span::styled(guidance, Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
             ])
             .block(Block::default().borders(Borders::ALL)),
             area,
@@ -193,35 +236,47 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let available_width = area.width.saturating_sub(6) as usize;
-    let items = indices
+    let items = rows
         .iter()
-        .map(|index| {
-            let branch = &app.branches[*index];
+        .map(|row| {
+            let branch = &app.branches[row.branch];
             let (badge, color) = match branch.kind {
-                BranchKind::New => (" NEW    ", Color::Green),
                 BranchKind::Local => (" LOCAL  ", Color::Blue),
                 BranchKind::Remote => (" REMOTE ", Color::Magenta),
             };
             let annotation = branch.annotation();
-            let used =
-                badge.chars().count() + branch.name.chars().count() + annotation.chars().count();
+            let used = badge.chars().count() + branch.name.chars().count() + annotation.chars().count();
             let padding = if annotation.is_empty() {
                 0
             } else {
                 available_width.saturating_sub(used).max(1)
             };
-            ListItem::new(Line::from(vec![
-                Span::styled(
-                    badge,
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(&branch.name),
-                Span::raw(" ".repeat(padding)),
-                Span::styled(annotation, Style::default().fg(Color::DarkGray)),
-            ]))
+            let badge_style = if row.actionable {
+                Style::default()
+                    .fg(color)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let name_style = if row.actionable {
+                Style::default()
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let mut spans = vec![
+                Span::styled(badge, badge_style),
+                Span::styled(branch.name.as_str(), name_style),
+            ];
+            if !annotation.is_empty() {
+                spans.push(Span::styled(
+                    format!("{}{}", " ".repeat(padding), annotation),
+                    name_style,
+                ));
+            }
+            ListItem::new(Line::from(spans))
         })
         .collect::<Vec<_>>();
-    let mut state = ListState::default().with_selected(Some(app.selected));
+    let mut state = ListState::default().with_selected(app.selected_position(picker));
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL))
         .highlight_style(
@@ -233,42 +288,217 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
-    let paragraph = if app.mode == Mode::FatalError {
-        Paragraph::new("Esc or Enter close").style(Style::default().fg(Color::DarkGray))
-    } else if app.is_creating() {
-        Paragraph::new(
-            app.status
-                .as_deref()
-                .unwrap_or("Creating worktree… please wait"),
-        )
-        .style(Style::default().fg(Color::Yellow))
-    } else if let Some(error) = &app.error {
-        Paragraph::new(error.as_str())
-            .style(Style::default().fg(Color::Red))
-            .wrap(Wrap { trim: true })
-    } else if let Mode::Naming { .. } = app.mode {
-        Paragraph::new("Enter create • Ctrl-U clear draft • Esc restore search")
-            .style(Style::default().fg(Color::DarkGray))
-    } else if app.filtered_indices().is_empty() {
-        let help = if app.query_can_create {
-            "Enter new from HEAD • Backspace edit • Ctrl-R refresh • Esc close"
+fn draw_conflict_body(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(conflict) = &app.conflict else {
+        return;
+    };
+    let mut lines = vec![
+        Line::from(format!(
+            "{} exists locally but does not track {}.",
+            conflict.proposed_local, conflict.remote
+        )),
+        Line::from(""),
+    ];
+    for (index, label) in [
+        "Choose a different local name",
+        "Back to branch selection",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let selected = conflict.selected_action == index;
+        let style = if selected {
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD)
         } else {
-            "Backspace edit • Ctrl-R refresh • Esc close"
+            Style::default()
         };
-        Paragraph::new(help).style(Style::default().fg(Color::DarkGray))
-    } else if app.is_fetching() || app.status.is_some() {
-        Paragraph::new(app.status.as_deref().unwrap_or("Fetching all remotes…"))
-            .style(Style::default().fg(Color::Yellow))
-    } else {
-        Paragraph::new(
-            "Enter open selected • Ctrl-N use selected as base • Ctrl-R refresh • Esc close",
-        )
-        .style(Style::default().fg(Color::DarkGray))
+        lines.push(Line::from(Span::styled(
+            format!("{} {label}", if selected { "›" } else { " " }),
+            style,
+        )));
+    }
+
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL)),
+        area,
+    );
+}
+
+fn draw_creating_body(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(request) = app.creating_request() else {
+        return;
+    };
+    let mut lines = vec![Line::from(format!("Branch: {}", request.branch))];
+    if let Some(base) = &request.base {
+        lines.push(Line::from(format!("Base: {base}")));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from("Creating and focusing worktree…"));
+    lines.push(Line::from("Please wait; popup closes when complete"));
+
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL)),
+        area,
+    );
+}
+
+fn draw_fatal_body(frame: &mut Frame, area: Rect, app: &App) {
+    let message = app.error.as_deref().unwrap_or("Could not start the picker");
+    frame.render_widget(
+        Paragraph::new(vec![Line::from(""), Line::from(message)])
+            .block(Block::default().borders(Borders::ALL))
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
+    let paragraph = match &app.mode {
+        Mode::FatalError => Paragraph::new("Esc or Enter close")
+            .style(Style::default().fg(Color::DarkGray)),
+        Mode::Creating => Paragraph::new("Creating worktree… please wait — Esc cannot cancel")
+            .style(Style::default().fg(Color::Yellow)),
+        Mode::Intent => Paragraph::new("Up/Down choose • Enter continue • Esc close")
+            .style(Style::default().fg(Color::DarkGray)),
+        Mode::ExistingPicker => picker_footer(app, Picker::Existing),
+        Mode::BasePicker => picker_footer(app, Picker::Base),
+        Mode::Naming { .. } => {
+            if let Some(error) = &app.error {
+                Paragraph::new(error.as_str())
+                    .style(Style::default().fg(Color::Red))
+                    .wrap(Wrap { trim: true })
+            } else {
+                Paragraph::new("Enter create • Ctrl-U clear • Esc back")
+                    .style(Style::default().fg(Color::DarkGray))
+            }
+        }
+        Mode::RemoteConflict => Paragraph::new("Enter continue • Esc back")
+            .style(Style::default().fg(Color::DarkGray)),
     };
 
     frame.render_widget(
         paragraph.block(Block::default().borders(Borders::ALL)),
         area,
     );
+}
+
+fn picker_footer(app: &App, picker: Picker) -> Paragraph<'_> {
+    if let Some(error) = &app.error {
+        return Paragraph::new(error.as_str())
+            .style(Style::default().fg(Color::Red))
+            .wrap(Wrap { trim: true });
+    }
+    if app.is_fetching() || app.status.is_some() {
+        return Paragraph::new(app.status.as_deref().unwrap_or("Fetching all remotes…"))
+            .style(Style::default().fg(Color::Yellow));
+    }
+    let (action, rows) = match picker {
+        Picker::Existing => ("open", app.picker_rows(Picker::Existing)),
+        Picker::Base => ("select base", app.picker_rows(Picker::Base)),
+    };
+    let query = match picker {
+        Picker::Existing => &app.existing.query,
+        Picker::Base => &app.base_picker.query,
+    };
+    let help = if rows.is_empty() {
+        if query.is_empty() {
+            format!("Ctrl-R refresh • Esc back")
+        } else {
+            format!("Backspace edit • Ctrl-R refresh • Esc back")
+        }
+    } else {
+        format!("Enter {action} • Ctrl-R refresh • Esc back")
+    };
+    Paragraph::new(help).style(Style::default().fg(Color::DarkGray))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::NameTarget;
+
+    #[test]
+    fn naming_header_fits_base_and_name_lines() {
+        assert_eq!(
+            header_height(&Mode::Naming {
+                target: NameTarget::CurrentHead
+            }),
+            4
+        );
+        assert_eq!(
+            header_height(&Mode::Naming {
+                target: NameTarget::SelectedBase
+            }),
+            4
+        );
+        assert_eq!(
+            header_height(&Mode::Naming {
+                target: NameTarget::RemoteConflict
+            }),
+            4
+        );
+        for mode in [
+            Mode::Intent,
+            Mode::ExistingPicker,
+            Mode::BasePicker,
+            Mode::RemoteConflict,
+            Mode::Creating,
+            Mode::FatalError,
+        ] {
+            assert_eq!(header_height(&mode), 3);
+        }
+    }
+
+    #[test]
+    fn empty_state_explains_no_rows_and_no_match() {
+        assert_eq!(
+            empty_state_message(Picker::Existing, ""),
+            (
+                "No branches to open".into(),
+                "Create an initial commit or refresh remotes".into()
+            )
+        );
+        assert_eq!(
+            empty_state_message(Picker::Base, ""),
+            (
+                "No bases to choose".into(),
+                "Create a branch or refresh remotes".into()
+            )
+        );
+        assert_eq!(
+            empty_state_message(Picker::Existing, "zzz"),
+            (
+                "No branches match “zzz”".into(),
+                "Change the search or refresh remotes".into()
+            )
+        );
+    }
+}
+
+/// Explains an empty picker list: no rows at all, or no rows matching the
+/// search. The first value is the message; the second is a hint.
+fn empty_state_message(picker: Picker, query: &str) -> (String, String) {
+    if query.is_empty() {
+        match picker {
+            Picker::Existing => (
+                "No branches to open".into(),
+                "Create an initial commit or refresh remotes".into(),
+            ),
+            Picker::Base => (
+                "No bases to choose".into(),
+                "Create a branch or refresh remotes".into(),
+            ),
+        }
+    } else {
+        let what = match picker {
+            Picker::Existing => "branches",
+            Picker::Base => "bases",
+        };
+        (
+            format!("No {what} match “{query}”"),
+            "Change the search or refresh remotes".into(),
+        )
+    }
 }

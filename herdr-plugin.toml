@@ -9,14 +9,14 @@ platforms = ["linux", "macos"]
 command = ["cargo", "build", "--release"]
 
 [[actions]]
-id = "open"
-title = "Pick worktree base"
+id = "create"
+title = "Create worktree"
 contexts = ["workspace"]
 command = ["./target/release/herdr-worktree-picker", "open"]
 
 [[panes]]
 id = "picker"
-title = "Pick worktree base"
+title = "Create worktree"
 placement = "popup"
 width = "80%"
 height = "80%"
