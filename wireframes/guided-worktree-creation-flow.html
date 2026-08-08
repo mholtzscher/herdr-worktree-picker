@@ -3,21 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Guided worktree creation flow</title>
+  <title>Guided worktree creation — wireframe</title>
   <style>
     :root {
       color-scheme: light;
-      --paper: #f2f1ec;
+      --paper: #f3f2ed;
       --panel: #fff;
       --terminal: #fafafa;
       --ink: #191919;
-      --muted: #666;
-      --line: #8d8d86;
-      --soft: #e7e6df;
-      --selected: #d9e3ee;
-      --blue: #315f86;
-      --green: #416b42;
-      --amber: #8a5a16;
+      --muted: #60605c;
+      --line: #8b8b84;
+      --soft: #e8e7e1;
+      --selected: #d9e2eb;
+      --info: #315f86;
+      --warning: #815515;
+      --error: #7b2d2d;
+      --success: #3f6841;
     }
 
     * { box-sizing: border-box; }
@@ -29,168 +30,234 @@
       font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
-    main {
-      width: min(1500px, calc(100% - 32px));
-      margin: 0 auto;
-      padding: 32px 0 56px;
+    button, input { font: inherit; }
+    button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid #333;
+      outline-offset: 2px;
     }
 
-    header.page-head { max-width: 850px; }
+    .page {
+      width: min(1320px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 30px 0 56px;
+    }
+
+    .page-head { max-width: 900px; }
     .eyebrow {
       margin: 0 0 5px;
-      color: var(--blue);
+      color: var(--info);
       font-size: 12px;
       font-weight: 800;
       letter-spacing: .09em;
       text-transform: uppercase;
     }
     h1 { margin: 0; font-size: clamp(26px, 4vw, 40px); line-height: 1.12; }
-    .lede { margin: 12px 0 0; color: #494949; max-width: 760px; }
+    .lede { margin: 12px 0 0; max-width: 820px; color: #474747; }
 
-    .diagram {
-      margin-top: 28px;
-      padding: clamp(14px, 2vw, 26px);
+    .flow-map, .review, .contract {
+      margin-top: 24px;
       border: 1px solid var(--line);
       background: var(--panel);
-      overflow-x: auto;
     }
 
-    .start {
-      width: min(410px, 100%);
-      margin: 0 auto;
-    }
+    .flow-map, .contract { padding: 16px; }
+    .section-head { margin: 0 0 12px; font-size: 17px; }
 
-    .connector-down {
-      height: 52px;
+    .flow-grid {
       display: grid;
-      place-items: center;
-      color: var(--blue);
-      font: 26px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
     }
 
-    .paths {
-      min-width: 1060px;
+    .flow-node {
+      border: 1px solid var(--line);
+      background: var(--terminal);
+      padding: 11px;
+      min-width: 0;
+    }
+    .flow-node.start, .flow-node.finish { grid-column: 1 / -1; width: min(560px, 100%); justify-self: center; }
+    .flow-node strong { display: block; margin-bottom: 3px; }
+    .flow-node span { color: var(--muted); font-size: 13px; }
+    .flow-node.exception { border-color: var(--warning); }
+    .flow-node.finish { border-color: var(--success); }
+    .flow-arrow { grid-column: 1 / -1; text-align: center; color: var(--info); font-weight: 800; }
+
+    .review { padding: 16px; }
+    .review-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 14px;
+    }
+    .review-head h2 { margin: 0; font-size: 17px; }
+    .review-head p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+
+    .scenario-picker {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 5px;
+      max-width: 760px;
+    }
+    .scenario-picker button {
+      border: 1px solid #777;
+      border-radius: 2px;
+      background: #fff;
+      color: #333;
+      padding: 5px 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .scenario-picker button[aria-pressed="true"] { background: #333; color: #fff; }
+
+    .review-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(320px, 1fr));
-      gap: 22px;
+      grid-template-columns: minmax(0, 1fr) 300px;
+      gap: 18px;
       align-items: start;
     }
 
-    .path-label {
-      margin: 0 0 9px;
-      color: var(--blue);
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: .08em;
-      text-align: center;
-      text-transform: uppercase;
+    .terminal-shell {
+      min-height: 520px;
+      padding: clamp(12px, 3vw, 28px);
+      border: 1px dashed #777;
+      background: #d8d7d1;
+      display: grid;
+      place-items: center;
     }
 
-    .terminal {
+    .popup {
+      width: min(760px, 100%);
+      min-height: 390px;
       border: 2px solid #333;
       background: var(--terminal);
-      box-shadow: 5px 5px 0 #c4c3bc;
-      font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      box-shadow: 7px 7px 0 #b8b7b0;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      display: grid;
+      grid-template-rows: auto minmax(235px, 1fr) auto;
     }
 
-    .terminal-head,
-    .terminal-foot { padding: 8px 10px; }
-    .terminal-head {
+    .popup-head, .popup-foot { padding: 10px 12px; }
+    .popup-head {
+      border-bottom: 1px solid var(--line);
       display: flex;
       justify-content: space-between;
-      gap: 12px;
-      border-bottom: 1px solid var(--line);
+      gap: 14px;
       font-weight: 800;
     }
-    .terminal-head span:last-child { color: var(--muted); font-weight: 400; }
-    .terminal-body { min-height: 140px; padding: 11px 12px; }
-    .terminal-foot {
+    .popup-head span:last-child { color: var(--muted); font-weight: 400; }
+    .popup-body { padding: 12px; min-width: 0; }
+    .popup-foot {
+      min-height: 48px;
       border-top: 1px solid var(--line);
       color: var(--muted);
-      font-size: 11px;
+      display: flex;
+      align-items: center;
     }
 
+    .field-line { display: flex; align-items: center; gap: 8px; margin-bottom: 11px; }
+    .field-line label { color: var(--muted); white-space: nowrap; }
+    .field-line input {
+      min-width: 0;
+      width: min(430px, 100%);
+      padding: 3px 5px;
+      border: 0;
+      border-bottom: 2px solid var(--info);
+      border-radius: 0;
+      background: #fff;
+      color: var(--ink);
+      font-family: inherit;
+    }
+
+    .rows { list-style: none; padding: 0; margin: 0; }
     .row {
+      width: 100%;
       display: grid;
-      grid-template-columns: 14px minmax(0, 1fr) auto;
-      gap: 6px;
-      padding: 2px 4px;
+      grid-template-columns: 15px 66px minmax(0, 1fr) auto;
+      gap: 7px;
+      align-items: baseline;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--ink);
+      padding: 5px 6px;
+      text-align: left;
+      font-family: inherit;
     }
-    .row.selected { background: var(--selected); font-weight: 700; }
-    .row.selected .meta { color: #3f5262; }
-    .row.disabled { color: #666; }
-    .meta { color: var(--muted); font-size: 10px; text-align: right; }
-    .field-line { margin: 5px 0 10px; }
-    .label { color: var(--muted); }
-    .field {
-      display: inline-block;
-      min-width: 170px;
-      padding: 1px 4px;
-      border-bottom: 2px solid var(--blue);
-      background: white;
-    }
+    button.row { cursor: pointer; }
+    .row.selected { background: var(--selected); font-weight: 800; }
+    .row.disabled { color: #6a6a66; }
+    .kind { font-size: 11px; font-weight: 800; }
+    .name { overflow-wrap: anywhere; }
+    .meta { color: var(--muted); font-size: 11px; text-align: right; overflow-wrap: anywhere; }
 
-    .explanation {
-      margin-top: 10px;
-      padding: 7px 8px;
-      border-left: 3px solid var(--blue);
-      background: #edf3f8;
-      white-space: normal;
+    .context, .message {
+      margin-top: 12px;
+      padding: 8px 9px;
+      border-left: 3px solid var(--info);
+      background: #edf2f6;
+      overflow-wrap: anywhere;
     }
-    .explanation.warning { border-left-color: var(--amber); background: #f8f0e5; }
-    .explanation.success { border-left-color: var(--green); background: #edf5ed; }
+    .message.warning { border-left-color: var(--warning); background: #f7efe3; }
+    .message.error { border-left-color: var(--error); background: #f6eaea; }
+    .message.success { border-left-color: var(--success); background: #ebf3eb; }
+    .message strong { display: block; margin-bottom: 2px; }
+
+    .center-state {
+      min-height: 210px;
+      display: grid;
+      place-content: center;
+      text-align: center;
+      padding: 20px;
+    }
+    .center-state strong { display: block; margin-bottom: 5px; }
 
     kbd {
       padding: 0 4px;
       border: 1px solid #999;
       background: #eee;
+      color: #333;
       font: inherit;
     }
 
-    .path-arrow {
-      height: 40px;
-      display: grid;
-      place-items: center;
-      color: var(--blue);
-      font: 22px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    .notes {
+      border: 1px solid var(--line);
+      background: var(--soft);
+      padding: 13px;
     }
+    .notes h3 { margin: 0 0 8px; font-size: 15px; }
+    .notes ul { margin: 0; padding-left: 18px; }
+    .notes li + li { margin-top: 8px; }
+    .notes code { font-size: 12px; }
 
-    .merge-label {
-      margin: 30px auto 10px;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: .06em;
-      text-align: center;
-      text-transform: uppercase;
-    }
-
-    .outcomes {
-      width: min(860px, 100%);
-      margin: 0 auto;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 24px;
-      align-items: start;
-    }
-    .outcomes .terminal:first-child { border-color: var(--amber); }
-    .outcomes .terminal:last-child { border-color: var(--green); }
-
-    .principles {
+    .contract-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-      margin-top: 20px;
+      gap: 10px;
     }
-    .principle { padding: 12px; border: 1px solid var(--line); background: var(--soft); }
-    .principle strong { display: block; margin-bottom: 3px; }
-    .principle span { color: var(--muted); font-size: 13px; }
+    .contract-item { border: 1px solid var(--line); background: var(--soft); padding: 11px; }
+    .contract-item strong { display: block; margin-bottom: 3px; }
+    .contract-item span { color: var(--muted); font-size: 13px; }
 
-    @media (max-width: 820px) {
-      main { width: min(100% - 16px, 1500px); padding-top: 18px; }
-      .diagram { padding: 10px; }
-      .paths { min-width: 0; grid-template-columns: 1fr; }
-      .outcomes, .principles { grid-template-columns: 1fr; }
+    @media (max-width: 900px) {
+      .review-head { flex-direction: column; }
+      .scenario-picker { justify-content: flex-start; max-width: none; }
+      .review-grid { grid-template-columns: 1fr; }
+      .contract-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 700px) {
+      .page { width: min(100% - 16px, 1320px); padding-top: 18px; }
+      .flow-grid { grid-template-columns: 1fr; }
+      .flow-node.start, .flow-node.finish, .flow-arrow { grid-column: 1; }
+      .review { padding: 8px; }
+      .terminal-shell { min-height: 470px; padding: 8px; }
+      .popup { min-height: 420px; box-shadow: 4px 4px 0 #b8b7b0; }
+      .row { grid-template-columns: 13px 58px minmax(0, 1fr); }
+      .meta { grid-column: 3; text-align: left; }
+      .contract-grid { grid-template-columns: 1fr; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -199,116 +266,434 @@
   </style>
 </head>
 <body>
-  <main>
+  <main class="page">
     <header class="page-head">
-      <p class="eyebrow">Proposed interaction diagram</p>
+      <p class="eyebrow">Confirmed low-fidelity interaction wireframe</p>
       <h1>Guided worktree creation</h1>
-      <p class="lede">The user chooses an outcome first. Every later screen has one stable purpose: choose a branch or base, enter a branch name, or resolve an exceptional conflict.</p>
+      <p class="lede"><strong>Review question:</strong> Does the replacement flow make intent, branch identity, recovery, and exceptional states explicit enough to implement without returning to the single-screen shortcut model?</p>
     </header>
 
-    <section class="diagram" aria-label="Guided worktree creation flow" tabindex="0">
-      <div class="start">
-        <article class="terminal">
-          <div class="terminal-head"><span>Create worktree</span><span>Start</span></div>
-          <div class="terminal-body">
-            <div class="row selected"><span>›</span><span>New branch from current HEAD</span><span></span></div>
-            <div class="row"><span></span><span>Use an existing branch</span><span></span></div>
-            <div class="row"><span></span><span>New branch from another base</span><span></span></div>
-            <div class="explanation"><span class="label">Current branch:</span> main</div>
-          </div>
-          <div class="terminal-foot"><kbd>↑↓</kbd> choose · <kbd>Enter</kbd> continue · <kbd>Esc</kbd> close</div>
-        </article>
+    <section class="flow-map" aria-labelledby="flow-title">
+      <h2 class="section-head" id="flow-title">Flow topology</h2>
+      <div class="flow-grid">
+        <div class="flow-node start"><strong>Start · Choose outcome</strong><span>Default: Open an existing branch. Esc closes.</span></div>
+        <div class="flow-arrow" aria-hidden="true">↓</div>
+        <div class="flow-node"><strong>A · New from current HEAD</strong><span>Blank name → validate exact input → resolve HEAD on submit.</span></div>
+        <div class="flow-node"><strong>B · Open existing branch</strong><span>Search local/remote → Enter opens immediately.</span></div>
+        <div class="flow-node"><strong>C · New from another base</strong><span>Search base → blank name → resolve ref on submit.</span></div>
+        <div class="flow-node exception"><strong>Inline name error</strong><span>Invalid or existing local names remain on the name screen.</span></div>
+        <div class="flow-node exception"><strong>Remote-name conflict</strong><span>Choose a different local name or return. Never open unrelated local work.</span></div>
+        <div class="flow-node exception"><strong>Fetch/create failure</strong><span>Return to the originating screen with its state retained.</span></div>
+        <div class="flow-arrow" aria-hidden="true">↓</div>
+        <div class="flow-node finish"><strong>Creating → verify tracking → notify → close</strong><span>Tracking repair failure is partial success: warn and close without retry.</span></div>
+      </div>
+    </section>
+
+    <section class="review" aria-labelledby="review-title">
+      <div class="review-head">
+        <div>
+          <h2 id="review-title">Inspectable popup states</h2>
+          <p>Use the scenarios, click rows, type in fields, or exercise Enter, Esc, arrows, Ctrl-R, and Ctrl-U.</p>
+        </div>
+        <div class="scenario-picker" role="group" aria-label="Preview state">
+          <button type="button" data-state="intent" aria-pressed="true">Start</button>
+          <button type="button" data-state="head-name" aria-pressed="false">HEAD name</button>
+          <button type="button" data-state="existing" aria-pressed="false">Existing</button>
+          <button type="button" data-state="base" aria-pressed="false">Choose base</button>
+          <button type="button" data-state="base-name" aria-pressed="false">Base name</button>
+          <button type="button" data-state="conflict" aria-pressed="false">Conflict</button>
+          <button type="button" data-state="conflict-name" aria-pressed="false">Rename</button>
+          <button type="button" data-state="fetching" aria-pressed="false">Fetching</button>
+          <button type="button" data-state="fetch-error" aria-pressed="false">Fetch error</button>
+          <button type="button" data-state="empty" aria-pressed="false">No results</button>
+          <button type="button" data-state="creating" aria-pressed="false">Creating</button>
+          <button type="button" data-state="create-error" aria-pressed="false">Create error</button>
+          <button type="button" data-state="detached" aria-pressed="false">Detached</button>
+          <button type="button" data-state="unborn" aria-pressed="false">No commits</button>
+          <button type="button" data-state="fatal" aria-pressed="false">Startup error</button>
+        </div>
       </div>
 
-      <div class="connector-down" aria-hidden="true">↓</div>
+      <div class="review-grid">
+        <div class="terminal-shell">
+          <section class="popup" id="popup" aria-label="Guided worktree creation popup" tabindex="0">
+            <header class="popup-head" id="popup-head"></header>
+            <div class="popup-body" id="popup-body" aria-live="polite"></div>
+            <footer class="popup-foot" id="popup-foot"></footer>
+          </section>
+        </div>
 
-      <div class="paths">
-        <section>
-          <h2 class="path-label">A · New from HEAD</h2>
-          <article class="terminal">
-            <div class="terminal-head"><span>Branch name</span><span>1 of 1</span></div>
-            <div class="terminal-body">
-              <div><span class="label">Base:</span> main</div>
-              <div class="field-line"><span class="label">Name:</span> <span class="field">feature/payments█</span></div>
-              <div class="explanation">Creates a new branch and worktree from the current HEAD.</div>
-            </div>
-            <div class="terminal-foot"><kbd>Enter</kbd> create · <kbd>Esc</kbd> back</div>
-          </article>
-        </section>
-
-        <section>
-          <h2 class="path-label">B · Existing branch</h2>
-          <article class="terminal">
-            <div class="terminal-head"><span>Choose branch</span><span>1 of 1</span></div>
-            <div class="terminal-body">
-              <div class="field-line"><span class="label">Search:</span> <span class="field">auth█</span></div>
-              <div class="row selected"><span>›</span><span>origin/feature/auth</span><span class="meta">remote</span></div>
-              <div class="row"><span></span><span>feature/auth-old</span><span class="meta">local</span></div>
-              <div class="row disabled"><span></span><span>feature/payments</span><span class="meta">at ../payments</span></div>
-              <div class="explanation">Creates local <strong>feature/auth</strong><br>Tracks origin/feature/auth</div>
-            </div>
-            <div class="terminal-foot"><kbd>Enter</kbd> create · <kbd>R</kbd> refresh · <kbd>Esc</kbd> back</div>
-          </article>
-        </section>
-
-        <section>
-          <h2 class="path-label">C · New from another base</h2>
-          <article class="terminal">
-            <div class="terminal-head"><span>Choose base</span><span>1 of 2</span></div>
-            <div class="terminal-body">
-              <div class="field-line"><span class="label">Search:</span> <span class="field">release█</span></div>
-              <div class="row selected"><span>›</span><span>release/2.4</span><span class="meta">local</span></div>
-              <div class="row"><span></span><span>origin/release/2.4</span><span class="meta">remote</span></div>
-            </div>
-            <div class="terminal-foot"><kbd>Enter</kbd> select base · <kbd>Esc</kbd> back</div>
-          </article>
-
-          <div class="path-arrow" aria-hidden="true">↓</div>
-
-          <article class="terminal">
-            <div class="terminal-head"><span>Branch name</span><span>2 of 2</span></div>
-            <div class="terminal-body">
-              <div><span class="label">Base:</span> release/2.4</div>
-              <div class="field-line"><span class="label">Name:</span> <span class="field">hotfix/payment-timeout█</span></div>
-            </div>
-            <div class="terminal-foot"><kbd>Enter</kbd> create · <kbd>Esc</kbd> back</div>
-          </article>
-        </section>
+        <aside class="notes" aria-labelledby="notes-title">
+          <h3 id="notes-title">Decision notes</h3>
+          <ul>
+            <li>Public action becomes <code>herdr-worktree-picker.create</code>.</li>
+            <li>Each path remembers its own query, selected ref, and name draft until close.</li>
+            <li>Search is case-insensitive substring matching; name input is never derived from search.</li>
+            <li>Checked-out refs are disabled for opening but remain valid bases; paths are absolute.</li>
+            <li>The current branch is excluded from “another base.” Detached HEAD disables only Path A.</li>
+            <li>Refs resolve on submission. Remote-derived locals track the exact selected remote.</li>
+            <li><kbd>Ctrl-R</kbd> is asynchronous and global; stale refs remain usable after fetch failure.</li>
+            <li>Creation cannot be cancelled. Ordinary failure returns to its source; partial tracking failure warns and closes.</li>
+            <li>The terminal implementation deliberately supports append, Backspace, and <kbd>Ctrl-U</kbd>, not movable-cursor editing.</li>
+          </ul>
+        </aside>
       </div>
+    </section>
 
-      <div class="merge-label">All creation paths converge here ↓</div>
-
-      <div class="outcomes">
-        <article class="terminal">
-          <div class="terminal-head"><span>Resolve local name conflict</span><span>Only when needed</span></div>
-          <div class="terminal-body">
-            <div class="explanation warning">feature/auth exists locally but does not track origin/feature/auth.</div>
-            <div style="margin-top:10px">
-              <div class="row selected"><span>›</span><span>Use local feature/auth</span><span></span></div>
-              <div class="row"><span></span><span>Choose a different local name</span><span></span></div>
-              <div class="row"><span></span><span>Go back</span><span></span></div>
-            </div>
-          </div>
-          <div class="terminal-foot"><kbd>Enter</kbd> continue · <kbd>Esc</kbd> back</div>
-        </article>
-
-        <article class="terminal">
-          <div class="terminal-head"><span>Creating worktree</span><span>Final</span></div>
-          <div class="terminal-body">
-            <div><span class="label">Branch:</span> feature/payments</div>
-            <div><span class="label">Base:</span> main</div>
-            <div class="explanation success">Creating and focusing worktree…</div>
-          </div>
-          <div class="terminal-foot">Please wait · popup closes when complete</div>
-        </article>
-      </div>
-
-      <div class="principles">
-        <div class="principle"><strong>Stable inputs</strong><span>Search always searches. Name always names.</span></div>
-        <div class="principle"><strong>Stable Enter key</strong><span>Enter accepts the visible choice or field.</span></div>
-        <div class="principle"><strong>Exceptions branch visibly</strong><span>Conflicts interrupt only the affected path.</span></div>
+    <section class="contract" aria-labelledby="contract-title">
+      <h2 class="section-head" id="contract-title">Implementation contract at a glance</h2>
+      <div class="contract-grid">
+        <div class="contract-item"><strong>Stable purpose</strong><span>Intent chooses. Search searches. Name names. Enter accepts the visible choice or field.</span></div>
+        <div class="contract-item"><strong>Safe identity</strong><span>Remote refs never silently resolve to unrelated same-named local branches.</span></div>
+        <div class="contract-item"><strong>One-step Back</strong><span>Esc returns one screen and preserves path-local state; Esc closes only at Start or fatal error.</span></div>
+        <div class="contract-item"><strong>Actionable selection</strong><span>Initial selection and arrows skip disabled rows and clamp at list ends.</span></div>
+        <div class="contract-item"><strong>Responsive work</strong><span>Fetch remains navigable; creation is exclusive, visible, and non-cancellable.</span></div>
+        <div class="contract-item"><strong>Completion</strong><span>Success focuses, verifies tracking, notifies best-effort, and closes without a success screen.</span></div>
       </div>
     </section>
   </main>
+
+  <script>
+    const paths = {
+      main: '/Users/michael/code/herdr-worktree-picker',
+      payments: '/Users/michael/code/payments'
+    };
+
+    const existingRows = [
+      { kind: 'LOCAL', name: 'main', meta: `at ${paths.main}`, disabled: true },
+      { kind: 'REMOTE', name: 'origin/feature/auth', meta: '3 days ago', context: 'Creates local feature/auth and tracks origin/feature/auth' },
+      { kind: 'LOCAL', name: 'feature/auth-old', meta: 'today', context: 'Opens local feature/auth-old' },
+      { kind: 'LOCAL', name: 'feature/payments', meta: `at ${paths.payments}`, disabled: true },
+      { kind: 'REMOTE', name: 'upstream/feature/auth', meta: '5 days ago', conflict: true }
+    ];
+
+    const baseRows = [
+      { kind: 'LOCAL', name: 'release/2.4', meta: 'today' },
+      { kind: 'LOCAL', name: 'feature/payments', meta: `at ${paths.payments}` },
+      { kind: 'REMOTE', name: 'origin/release/2.4', meta: '3 days ago' }
+    ];
+
+    const memory = {
+      existing: { query: '', selected: 1 },
+      base: { query: '', selected: 0 },
+      headName: '',
+      baseName: '',
+      conflictName: ''
+    };
+
+    const popup = document.querySelector('#popup');
+    const head = document.querySelector('#popup-head');
+    const body = document.querySelector('#popup-body');
+    const foot = document.querySelector('#popup-foot');
+    const scenarioButtons = [...document.querySelectorAll('[data-state]')];
+    let state = 'intent';
+    let priorState = 'base-name';
+    let intentSelected = 1;
+    let conflictSelected = 0;
+    let selectedBase = 'release/2.4';
+    let inlineError = '';
+    let fetchContext = 'existing';
+    let fetchTimer;
+
+    const intentRows = [
+      { name: 'New branch from current HEAD' },
+      { name: 'Open an existing branch' },
+      { name: 'New branch from another base' }
+    ];
+
+    function esc(text) {
+      return String(text).replace(/[&<>'"]/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      })[character]);
+    }
+
+    function setHead(title, step) {
+      head.innerHTML = `<span>${esc(title)}</span><span>${esc(step)}</span>`;
+    }
+
+    function setFooter(html) { foot.innerHTML = html; }
+
+    function updateScenarioButtons() {
+      scenarioButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.state === state)));
+    }
+
+    function actionable(rows, index) { return rows[index] && !rows[index].disabled; }
+
+    function filteredRows(kind) {
+      const source = kind === 'existing' ? existingRows : baseRows;
+      const query = memory[kind].query.toLowerCase();
+      return source.filter(row => !query || row.name.toLowerCase().includes(query));
+    }
+
+    function normalizeSelection(kind) {
+      const rows = filteredRows(kind);
+      let selected = memory[kind].selected;
+      if (!actionable(rows, selected)) selected = rows.findIndex(row => !row.disabled);
+      memory[kind].selected = selected;
+      return rows;
+    }
+
+    function renderRows(rows, selected, onSelect) {
+      const list = document.createElement('ul');
+      list.className = 'rows';
+      rows.forEach((row, index) => {
+        const li = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `row${index === selected ? ' selected' : ''}${row.disabled ? ' disabled' : ''}`;
+        button.disabled = Boolean(row.disabled);
+        button.innerHTML = `<span>${index === selected ? '›' : ''}</span><span class="kind">${esc(row.kind || '')}</span><span class="name">${esc(row.name)}</span><span class="meta">${esc(row.meta || '')}</span>`;
+        button.addEventListener('click', () => onSelect(index));
+        button.addEventListener('dblclick', activate);
+        li.append(button);
+        list.append(li);
+      });
+      return list;
+    }
+
+    function field(label, value, key, aria) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'field-line';
+      const labelNode = document.createElement('label');
+      labelNode.htmlFor = 'active-field';
+      labelNode.textContent = label;
+      const input = document.createElement('input');
+      input.id = 'active-field';
+      input.value = value;
+      input.setAttribute('aria-label', aria);
+      input.autocomplete = 'off';
+      input.addEventListener('input', () => {
+        inlineError = '';
+        if (key === 'existing' || key === 'base') {
+          memory[key].query = input.value;
+          memory[key].selected = 0;
+        } else {
+          memory[key] = input.value;
+        }
+        render();
+        document.querySelector('#active-field')?.focus();
+      });
+      wrapper.append(labelNode, input);
+      return wrapper;
+    }
+
+    function renderIntent(detached = false, unborn = false) {
+      setHead('Create worktree', 'Start');
+      const rows = intentRows.map((row, index) => ({
+        ...row,
+        disabled: unborn || (detached && index === 0)
+      }));
+      if (!actionable(rows, intentSelected)) intentSelected = rows.findIndex(row => !row.disabled);
+      body.replaceChildren(renderRows(rows, intentSelected, index => {
+        if (!rows[index].disabled) { intentSelected = index; render(); }
+      }));
+      const context = document.createElement('div');
+      context.className = unborn ? 'message warning' : 'context';
+      if (unborn) context.innerHTML = '<strong>No commits yet</strong>Create an initial commit before creating a worktree.';
+      else if (detached) context.innerHTML = '<strong>Current HEAD: detached</strong>New branch from current HEAD is unavailable. Existing branches and other bases remain available.';
+      else context.innerHTML = '<span>Current branch:</span> <strong>main</strong>';
+      body.append(context);
+      setFooter(unborn ? '<kbd>Esc</kbd> close' : '<kbd>↑↓</kbd> choose · <kbd>Enter</kbd> continue · <kbd>Esc</kbd> close');
+    }
+
+    function renderPicker(kind, forcedStatus = '') {
+      const isExisting = kind === 'existing';
+      setHead(isExisting ? 'Choose branch' : 'Choose base', '1 of ' + (isExisting ? '1' : '2'));
+      const rows = normalizeSelection(kind);
+      body.replaceChildren(field('Search:', memory[kind].query, kind, isExisting ? 'Search existing branches' : 'Search branch bases'));
+      if (!rows.length || state === 'empty') {
+        const empty = document.createElement('div');
+        empty.className = 'center-state';
+        empty.innerHTML = `<div><strong>No ${isExisting ? 'branches' : 'bases'} match “${esc(state === 'empty' ? 'missing' : memory[kind].query)}”</strong><span>Change the search or refresh remotes. Enter does nothing.</span></div>`;
+        body.append(empty);
+      } else {
+        body.append(renderRows(rows, memory[kind].selected, index => {
+          if (actionable(rows, index)) { memory[kind].selected = index; inlineError = ''; render(); }
+        }));
+        const selected = rows[memory[kind].selected];
+        if (selected?.context) {
+          const context = document.createElement('div');
+          context.className = 'context';
+          context.textContent = selected.context;
+          body.append(context);
+        }
+      }
+      if (forcedStatus === 'fetching') {
+        const message = document.createElement('div');
+        message.className = 'message';
+        message.innerHTML = '<strong>Fetching all remotes…</strong>Search, navigation, and Back remain available.';
+        body.append(message);
+        setFooter('<kbd>Enter</kbd> act · refresh in progress · <kbd>Esc</kbd> back');
+      } else if (forcedStatus === 'error') {
+        const message = document.createElement('div');
+        message.className = 'message error';
+        message.innerHTML = '<strong>Fetch failed</strong>Could not resolve host github.com. Existing refs remain usable; Ctrl-R retries.';
+        body.append(message);
+        setFooter(`<kbd>Enter</kbd> ${isExisting ? 'open' : 'select base'} · <kbd>Ctrl-R</kbd> retry · <kbd>Esc</kbd> back`);
+      } else {
+        setFooter(`<kbd>Enter</kbd> ${isExisting ? 'open' : 'select base'} · <kbd>Ctrl-R</kbd> refresh · <kbd>Esc</kbd> back`);
+      }
+    }
+
+    function renderName(target, error = '') {
+      const isHead = target === 'headName';
+      const isConflict = target === 'conflictName';
+      const value = memory[target];
+      const base = isHead ? 'main (current HEAD; resolved on create)' : isConflict ? 'origin/feature/auth (tracks exact remote)' : `${selectedBase} (resolved on create)`;
+      setHead(isConflict ? 'Choose a different local name' : 'Branch name', isHead ? '1 of 1' : isConflict ? 'Conflict' : '2 of 2');
+      body.innerHTML = `<div><span style="color:var(--muted)">Base:</span> ${esc(base)}</div>`;
+      body.append(field('Name:', value, target, 'New local branch name'));
+      if (error || inlineError) {
+        const message = document.createElement('div');
+        message.className = 'message error';
+        message.innerHTML = `<strong>Could not create branch</strong>${esc(error || inlineError)}`;
+        body.append(message);
+      } else {
+        const context = document.createElement('div');
+        context.className = 'context';
+        context.textContent = 'Input begins blank and is validated exactly on Enter. Search text is never reused.';
+        body.append(context);
+      }
+      setFooter(`<kbd>Enter</kbd> create · <kbd>Ctrl-U</kbd> clear · <kbd>Esc</kbd> ${isConflict ? 'conflict' : 'back'}`);
+    }
+
+    function renderConflict() {
+      setHead('Resolve local name conflict', 'Only when needed');
+      body.innerHTML = '<div class="message warning"><strong>Remote identity conflict</strong>feature/auth exists locally but does not track origin/feature/auth. The unrelated local branch will not be opened.</div>';
+      const rows = [
+        { name: 'Choose a different local name' },
+        { name: 'Back to branch selection' }
+      ];
+      body.append(renderRows(rows, conflictSelected, index => { conflictSelected = index; render(); }));
+      setFooter('<kbd>Enter</kbd> continue · <kbd>Esc</kbd> back to branch selection');
+    }
+
+    function renderCreating() {
+      setHead('Creating worktree', 'Final');
+      body.innerHTML = '<div><span style="color:var(--muted)">Branch:</span> feature/payments</div><div><span style="color:var(--muted)">Base:</span> main (resolved HEAD)</div><div class="message success"><strong>Creating and focusing worktree…</strong>After success: verify exact upstream when required, notify best-effort, then close.</div>';
+      setFooter('Please wait · creation cannot be cancelled · popup closes when complete');
+    }
+
+    function renderFatal() {
+      setHead('Worktree creation error', 'Startup');
+      body.innerHTML = '<div class="center-state"><div><strong>No Git repository found</strong>No Git repository found for /Users/michael/Downloads.</div></div>';
+      setFooter('<kbd>Esc</kbd> or <kbd>Enter</kbd> close');
+    }
+
+    function render() {
+      updateScenarioButtons();
+      if (state === 'intent') renderIntent();
+      else if (state === 'detached') renderIntent(true, false);
+      else if (state === 'unborn') renderIntent(false, true);
+      else if (state === 'existing') renderPicker('existing');
+      else if (state === 'base') renderPicker('base');
+      else if (state === 'fetching') renderPicker(fetchContext, 'fetching');
+      else if (state === 'fetch-error') renderPicker('existing', 'error');
+      else if (state === 'empty') renderPicker('existing');
+      else if (state === 'head-name') renderName('headName');
+      else if (state === 'base-name') renderName('baseName');
+      else if (state === 'conflict-name') renderName('conflictName');
+      else if (state === 'create-error') renderName('baseName', 'Herdr could not create the worktree. The name and selected base are retained.');
+      else if (state === 'conflict') renderConflict();
+      else if (state === 'creating') renderCreating();
+      else if (state === 'fatal') renderFatal();
+    }
+
+    function setState(next, focusPopup = true) {
+      clearTimeout(fetchTimer);
+      if (next === 'base-name') selectedBase = 'release/2.4';
+      if (next === 'create-error' && !memory.baseName) memory.baseName = 'hotfix/payment-timeout';
+      state = next;
+      inlineError = '';
+      render();
+      if (focusPopup) popup.focus();
+    }
+
+    function activate() {
+      if (state === 'intent') {
+        if (intentSelected === 0) setState('head-name');
+        else if (intentSelected === 1) setState('existing');
+        else setState('base');
+      } else if (state === 'existing' || state === 'fetching' || state === 'fetch-error') {
+        const rows = normalizeSelection('existing');
+        const selected = rows[memory.existing.selected];
+        if (!selected || selected.disabled) return;
+        if (selected.conflict) setState('conflict');
+        else setState('creating');
+      } else if (state === 'base') {
+        const rows = normalizeSelection('base');
+        const selected = rows[memory.base.selected];
+        if (!selected) return;
+        selectedBase = selected.name;
+        setState('base-name');
+      } else if (state === 'head-name' || state === 'base-name' || state === 'conflict-name' || state === 'create-error') {
+        const key = state === 'head-name' ? 'headName' : state === 'conflict-name' ? 'conflictName' : 'baseName';
+        const value = memory[key];
+        if (!value) { inlineError = 'Branch name is required.'; render(); return; }
+        if (/\s|\.\./.test(value)) { inlineError = `fatal: “${value}” is not a valid branch name`; render(); return; }
+        priorState = state === 'create-error' ? 'base-name' : state;
+        setState('creating');
+      } else if (state === 'conflict') {
+        setState(conflictSelected === 0 ? 'conflict-name' : 'existing');
+      }
+    }
+
+    function goBack() {
+      if (state === 'intent' || state === 'detached' || state === 'unborn' || state === 'fatal' || state === 'creating') return;
+      if (state === 'head-name' || state === 'existing' || state === 'base' || state === 'fetching' || state === 'fetch-error' || state === 'empty') setState('intent');
+      else if (state === 'base-name' || state === 'create-error') setState('base');
+      else if (state === 'conflict') setState('existing');
+      else if (state === 'conflict-name') setState('conflict');
+    }
+
+    function move(delta) {
+      if (state === 'intent') {
+        intentSelected = Math.max(0, Math.min(intentRows.length - 1, intentSelected + delta));
+        render();
+      } else if (state === 'existing' || state === 'fetching' || state === 'fetch-error') {
+        const rows = filteredRows('existing');
+        let next = memory.existing.selected;
+        do { next += delta; } while (rows[next]?.disabled);
+        if (next >= 0 && next < rows.length) memory.existing.selected = next;
+        render();
+      } else if (state === 'base') {
+        const rows = filteredRows('base');
+        memory.base.selected = Math.max(0, Math.min(rows.length - 1, memory.base.selected + delta));
+        render();
+      } else if (state === 'conflict') {
+        conflictSelected = Math.max(0, Math.min(1, conflictSelected + delta));
+        render();
+      }
+    }
+
+    scenarioButtons.forEach(button => button.addEventListener('click', () => setState(button.dataset.state, false)));
+
+    popup.addEventListener('keydown', event => {
+      if (event.target.matches('input') && !['Escape', 'Enter'].includes(event.key) && !(event.ctrlKey && ['u', 'r'].includes(event.key.toLowerCase()))) return;
+      if (event.key === 'Enter') { event.preventDefault(); activate(); }
+      else if (event.key === 'Escape') { event.preventDefault(); goBack(); }
+      else if (event.key === 'ArrowDown') { event.preventDefault(); move(1); }
+      else if (event.key === 'ArrowUp') { event.preventDefault(); move(-1); }
+      else if (event.ctrlKey && event.key.toLowerCase() === 'u') {
+        event.preventDefault();
+        if (state === 'existing') memory.existing.query = '';
+        else if (state === 'base') memory.base.query = '';
+        else if (state === 'head-name') memory.headName = '';
+        else if (state === 'base-name' || state === 'create-error') memory.baseName = '';
+        else if (state === 'conflict-name') memory.conflictName = '';
+        inlineError = '';
+        render();
+      } else if (event.ctrlKey && event.key.toLowerCase() === 'r' && ['existing', 'base', 'fetch-error'].includes(state)) {
+        event.preventDefault();
+        const returnState = state === 'base' ? 'base' : 'existing';
+        fetchContext = returnState;
+        state = 'fetching';
+        render();
+        fetchTimer = window.setTimeout(() => { state = returnState; render(); }, 1200);
+      }
+    });
+
+    render();
+  </script>
 </body>
 </html>

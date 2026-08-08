@@ -1,9 +1,10 @@
 # Single-Screen Worktree Picker — Implementation Spec
 
-**Status:** Implemented
+**Status:** Superseded by [Guided Worktree Creation](guided-worktree-creation.md)
 **Effort:** L (1–2 days)
-**Target:** Next plugin release
+**Target:** Released implementation; retained as design history
 **Date:** 2026-08-06
+**Superseded:** 2026-08-08
 
 ## Problem statement
 
