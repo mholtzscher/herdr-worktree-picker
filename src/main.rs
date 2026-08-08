@@ -111,7 +111,7 @@ fn draw(frame: &mut Frame, app: &App) {
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(header_height(&app.mode)),
             Constraint::Min(5),
             Constraint::Length(3),
         ])
@@ -120,6 +120,16 @@ fn draw(frame: &mut Frame, app: &App) {
     draw_header(frame, areas[0], app);
     draw_body(frame, areas[1], app);
     draw_footer(frame, areas[2], app);
+}
+
+/// Header height per mode. Every screen fits one content row below the title
+/// except naming, which shows both the base and the editable name line.
+fn header_height(mode: &Mode) -> u16 {
+    if matches!(mode, Mode::Naming { .. }) {
+        4
+    } else {
+        3
+    }
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
@@ -210,20 +220,14 @@ fn draw_picker_body(frame: &mut Frame, area: Rect, app: &App, picker: Picker) {
         Picker::Base => &app.base_picker.query,
     };
 
-    if rows.is_empty() && !query.is_empty() {
-        let what = match picker {
-            Picker::Existing => "branches",
-            Picker::Base => "bases",
-        };
+    if rows.is_empty() {
+        let (message, hint) = empty_state_message(picker, query);
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
-                Line::from(format!("No {what} match “{query}”")),
+                Line::from(message),
                 Line::from(""),
-                Line::from(Span::styled(
-                    "Change the search or refresh remotes",
-                    Style::default().fg(Color::DarkGray),
-                )),
+                Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
             ])
             .block(Block::default().borders(Borders::ALL)),
             area,
@@ -398,10 +402,103 @@ fn picker_footer(app: &App, picker: Picker) -> Paragraph<'_> {
         Picker::Existing => &app.existing.query,
         Picker::Base => &app.base_picker.query,
     };
-    let help = if rows.is_empty() && !query.is_empty() {
-        format!("Backspace edit • Ctrl-R refresh • Esc back")
+    let help = if rows.is_empty() {
+        if query.is_empty() {
+            format!("Ctrl-R refresh • Esc back")
+        } else {
+            format!("Backspace edit • Ctrl-R refresh • Esc back")
+        }
     } else {
         format!("Enter {action} • Ctrl-R refresh • Esc back")
     };
     Paragraph::new(help).style(Style::default().fg(Color::DarkGray))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::NameTarget;
+
+    #[test]
+    fn naming_header_fits_base_and_name_lines() {
+        assert_eq!(
+            header_height(&Mode::Naming {
+                target: NameTarget::CurrentHead
+            }),
+            4
+        );
+        assert_eq!(
+            header_height(&Mode::Naming {
+                target: NameTarget::SelectedBase
+            }),
+            4
+        );
+        assert_eq!(
+            header_height(&Mode::Naming {
+                target: NameTarget::RemoteConflict
+            }),
+            4
+        );
+        for mode in [
+            Mode::Intent,
+            Mode::ExistingPicker,
+            Mode::BasePicker,
+            Mode::RemoteConflict,
+            Mode::Creating,
+            Mode::FatalError,
+        ] {
+            assert_eq!(header_height(&mode), 3);
+        }
+    }
+
+    #[test]
+    fn empty_state_explains_no_rows_and_no_match() {
+        assert_eq!(
+            empty_state_message(Picker::Existing, ""),
+            (
+                "No branches to open".into(),
+                "Create an initial commit or refresh remotes".into()
+            )
+        );
+        assert_eq!(
+            empty_state_message(Picker::Base, ""),
+            (
+                "No bases to choose".into(),
+                "Create a branch or refresh remotes".into()
+            )
+        );
+        assert_eq!(
+            empty_state_message(Picker::Existing, "zzz"),
+            (
+                "No branches match “zzz”".into(),
+                "Change the search or refresh remotes".into()
+            )
+        );
+    }
+}
+
+/// Explains an empty picker list: no rows at all, or no rows matching the
+/// search. The first value is the message; the second is a hint.
+fn empty_state_message(picker: Picker, query: &str) -> (String, String) {
+    if query.is_empty() {
+        match picker {
+            Picker::Existing => (
+                "No branches to open".into(),
+                "Create an initial commit or refresh remotes".into(),
+            ),
+            Picker::Base => (
+                "No bases to choose".into(),
+                "Create a branch or refresh remotes".into(),
+            ),
+        }
+    } else {
+        let what = match picker {
+            Picker::Existing => "branches",
+            Picker::Base => "bases",
+        };
+        (
+            format!("No {what} match “{query}”"),
+            "Change the search or refresh remotes".into(),
+        )
+    }
 }
