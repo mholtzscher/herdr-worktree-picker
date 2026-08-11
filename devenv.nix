@@ -4,7 +4,6 @@
   packages = with pkgs; [
     gh
     git
-    inputs.herdr.packages.${pkgs.system}.default
   ];
 
   languages.rust = {
