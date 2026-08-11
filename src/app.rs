@@ -8,7 +8,7 @@ use std::{
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::{git, herdr};
+use crate::{git, github, herdr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BranchKind {
@@ -27,7 +27,14 @@ pub(crate) enum HeadState {
 pub(crate) enum Intent {
     NewFromHead,
     OpenExisting,
+    OpenPullRequest,
     NewFromBase,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LaunchRoute {
+    Create,
+    PullRequest,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -151,6 +158,8 @@ pub(crate) enum Mode {
     Intent,
     ExistingPicker,
     BasePicker,
+    PullRequestPicker,
+    PreparingPullRequest { number: u64, title: String },
     Naming { target: NameTarget },
     RemoteConflict,
     Creating,
@@ -160,9 +169,21 @@ pub(crate) enum Mode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CreateSource {
     ExistingPicker,
+    PullRequestPicker,
     CurrentHeadName,
     SelectedBaseName,
     RemoteConflictName,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PullRequestPickerState {
+    pub(crate) query: String,
+    pub(crate) selected: Option<u64>,
+    pub(crate) repository: Option<github::GitHubRepository>,
+    pub(crate) items: Vec<github::PullRequest>,
+    pub(crate) truncated: bool,
+    pub(crate) status: Option<String>,
+    pub(crate) error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -204,6 +225,14 @@ struct CreateTask {
     source: CreateSource,
 }
 
+struct PullRequestLoadTask {
+    receiver: Receiver<Result<github::PullRequestList, String>>,
+}
+
+struct PullRequestPrepareTask {
+    receiver: Receiver<Result<github::PreparedPullRequest, String>>,
+}
+
 pub(crate) struct PickerRow {
     pub(crate) branch: usize,
     pub(crate) actionable: bool,
@@ -215,6 +244,8 @@ pub(crate) struct App {
     pub(crate) repo: PathBuf,
     pub(crate) head: HeadState,
     pub(crate) branches: Vec<Branch>,
+    pub(crate) launch_route: LaunchRoute,
+    pub(crate) pull_request: PullRequestPickerState,
     pub(crate) intent: Intent,
     pub(crate) mode: Mode,
     pub(crate) existing: PickerMemory,
@@ -226,6 +257,8 @@ pub(crate) struct App {
     pub(crate) status: Option<String>,
     pub(crate) error: Option<String>,
     fetch: Option<Receiver<Result<Vec<Branch>, String>>>,
+    pull_request_load: Option<PullRequestLoadTask>,
+    pull_request_prepare: Option<PullRequestPrepareTask>,
     create: Option<CreateTask>,
     pub(crate) creating_branch: Option<String>,
     pub(crate) done: bool,
@@ -236,17 +269,21 @@ impl App {
         herdr: OsString,
         workspace_id: String,
         repo: PathBuf,
+        launch_route: LaunchRoute,
     ) -> Result<Self, String> {
         let head = git::load_head(&repo)?;
         let branches = git::load_branches(&repo)?;
-        Ok(Self {
+        let direct_pr = launch_route == LaunchRoute::PullRequest;
+        let mut app = Self {
             herdr,
             workspace_id,
             repo,
             head,
             branches,
+            launch_route,
+            pull_request: PullRequestPickerState::default(),
             intent: Intent::OpenExisting,
-            mode: Mode::Intent,
+            mode: if direct_pr { Mode::PullRequestPicker } else { Mode::Intent },
             existing: PickerMemory::default(),
             base_picker: PickerMemory::default(),
             selected_base: None,
@@ -256,10 +293,14 @@ impl App {
             status: None,
             error: None,
             fetch: None,
+            pull_request_load: None,
+            pull_request_prepare: None,
             create: None,
             creating_branch: None,
             done: false,
-        })
+        };
+        if direct_pr { app.start_pull_request_load(); }
+        Ok(app)
     }
 
     pub(crate) fn fatal(herdr: OsString, message: String) -> Self {
@@ -269,6 +310,8 @@ impl App {
             repo: PathBuf::new(),
             head: HeadState::Unborn,
             branches: Vec::new(),
+            launch_route: LaunchRoute::Create,
+            pull_request: PullRequestPickerState::default(),
             intent: Intent::OpenExisting,
             mode: Mode::FatalError,
             existing: PickerMemory::default(),
@@ -280,6 +323,8 @@ impl App {
             status: None,
             error: Some(message),
             fetch: None,
+            pull_request_load: None,
+            pull_request_prepare: None,
             create: None,
             creating_branch: None,
             done: false,
@@ -290,6 +335,10 @@ impl App {
         self.fetch.is_some()
     }
 
+    pub(crate) fn is_loading_pull_requests(&self) -> bool {
+        self.pull_request_load.is_some()
+    }
+
     /// The request backing the Creating screen; read-only for rendering.
     pub(crate) fn creating_request(&self) -> Option<&CreateRequest> {
         self.create.as_ref().map(|task| &task.request)
@@ -298,9 +347,8 @@ impl App {
     pub(crate) fn intent_enabled(&self, intent: Intent) -> bool {
         match intent {
             Intent::NewFromHead => matches!(self.head, HeadState::Branch { .. }),
-            Intent::OpenExisting | Intent::NewFromBase => {
-                !matches!(self.head, HeadState::Unborn)
-            }
+            Intent::OpenPullRequest => true,
+            Intent::OpenExisting | Intent::NewFromBase => !matches!(self.head, HeadState::Unborn)
         }
     }
 
@@ -372,6 +420,43 @@ impl App {
             }
         }
 
+        let pull_request_load_result = self
+            .pull_request_load
+            .as_ref()
+            .and_then(|task| task.receiver.try_recv().ok());
+        if let Some(result) = pull_request_load_result {
+            self.pull_request_load = None;
+            match result {
+                Ok(list) => {
+                    self.pull_request.repository = Some(list.repository);
+                    self.pull_request.items = list.items;
+                    self.pull_request.truncated = list.truncated;
+                    self.pull_request.status = None;
+                    self.pull_request.error = None;
+                    self.normalize_pull_request_selection();
+                }
+                Err(error) => {
+                    self.pull_request.status = None;
+                    self.pull_request.error = Some(error);
+                }
+            }
+        }
+
+        let pull_request_prepare_result = self
+            .pull_request_prepare
+            .as_ref()
+            .and_then(|task| task.receiver.try_recv().ok());
+        if let Some(result) = pull_request_prepare_result {
+            self.pull_request_prepare = None;
+            match result {
+                Ok(prepared) => self.start_create(prepared.request, CreateSource::PullRequestPicker),
+                Err(error) => {
+                    self.mode = Mode::PullRequestPicker;
+                    self.pull_request.error = Some(error);
+                }
+            }
+        }
+
         let create_result = self
             .create
             .as_ref()
@@ -401,14 +486,18 @@ impl App {
                 CreateResult::Failed(error) => {
                     self.creating_branch = None;
                     self.mode = recovery_mode(task.source);
-                    self.error = Some(error);
+                    if task.source == CreateSource::PullRequestPicker {
+                        self.pull_request.error = Some(error);
+                    } else {
+                        self.error = Some(error);
+                    }
                 }
             }
         }
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) {
-        if self.create.is_some() {
+        if self.create.is_some() || self.pull_request_prepare.is_some() {
             return;
         }
         if self.mode == Mode::FatalError {
@@ -422,9 +511,10 @@ impl App {
             Mode::Intent => self.handle_intent_key(key),
             Mode::ExistingPicker => self.handle_picker_key(key, Picker::Existing),
             Mode::BasePicker => self.handle_picker_key(key, Picker::Base),
+            Mode::PullRequestPicker => self.handle_pull_request_key(key),
             Mode::Naming { target } => self.handle_naming_key(key, target),
             Mode::RemoteConflict => self.handle_conflict_key(key),
-            Mode::Creating | Mode::FatalError => {}
+            Mode::PreparingPullRequest { .. } | Mode::Creating | Mode::FatalError => {}
         }
     }
 
@@ -440,6 +530,10 @@ impl App {
                             target: NameTarget::CurrentHead,
                         },
                         Intent::OpenExisting => Mode::ExistingPicker,
+                        Intent::OpenPullRequest => {
+                            self.start_pull_request_load();
+                            Mode::PullRequestPicker
+                        }
                         Intent::NewFromBase => Mode::BasePicker,
                     };
                 }
@@ -460,12 +554,102 @@ impl App {
 
     fn enabled_intents(&self) -> Vec<Intent> {
         match &self.head {
-            HeadState::Branch { .. } => {
-                vec![Intent::NewFromHead, Intent::OpenExisting, Intent::NewFromBase]
-            }
-            HeadState::Detached { .. } => vec![Intent::OpenExisting, Intent::NewFromBase],
-            HeadState::Unborn => vec![Intent::OpenExisting],
+            HeadState::Branch { .. } => vec![
+                Intent::NewFromHead, Intent::OpenExisting, Intent::OpenPullRequest, Intent::NewFromBase,
+            ],
+            HeadState::Detached { .. } => vec![Intent::OpenExisting, Intent::OpenPullRequest, Intent::NewFromBase],
+            HeadState::Unborn => vec![Intent::OpenPullRequest],
         }
+    }
+
+    pub(crate) fn pull_request_rows(&self) -> Vec<usize> {
+        self.pull_request.items.iter().enumerate()
+            .filter(|(_, pr)| github::matches_query(pr, &self.pull_request.query))
+            .map(|(position, _)| position).collect()
+    }
+
+    pub(crate) fn selected_pull_request_position(&self) -> Option<usize> {
+        let rows = self.pull_request_rows();
+        self.pull_request.selected.and_then(|number| {
+            rows.iter().position(|position| self.pull_request.items[*position].number == number)
+        }).or_else(|| (!rows.is_empty()).then_some(0))
+    }
+
+    fn normalize_pull_request_selection(&mut self) {
+        let rows = self.pull_request_rows();
+        let selected = self.pull_request.selected.filter(|number| {
+            rows.iter().any(|position| self.pull_request.items[*position].number == *number)
+        }).or_else(|| rows.first().map(|position| self.pull_request.items[*position].number));
+        self.pull_request.selected = selected;
+    }
+
+    fn handle_pull_request_key(&mut self, key: KeyEvent) {
+        // Until the first result, only Esc is meaningful; stale results remain usable while refreshing.
+        if self.pull_request.items.is_empty() && self.pull_request_load.is_some() {
+            if key.code == KeyCode::Esc { self.leave_pull_request_picker(); }
+            return;
+        }
+        match key.code {
+            KeyCode::Esc => self.leave_pull_request_picker(),
+            KeyCode::Up => self.move_pull_request_selection(-1),
+            KeyCode::Down => self.move_pull_request_selection(1),
+            KeyCode::Enter => self.start_pull_request_prepare(),
+            KeyCode::Backspace => {
+                self.pull_request.error = None;
+                self.pull_request.query.pop();
+                self.normalize_pull_request_selection();
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.pull_request.error = None;
+                self.pull_request.query.clear();
+                self.pull_request.selected = None;
+                self.normalize_pull_request_selection();
+            }
+            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => self.start_pull_request_load(),
+            KeyCode::Char(character) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+                self.pull_request.error = None;
+                self.pull_request.query.push(character);
+                self.normalize_pull_request_selection();
+            }
+            _ => {}
+        }
+    }
+
+    fn leave_pull_request_picker(&mut self) {
+        if self.launch_route == LaunchRoute::PullRequest { self.done = true; }
+        else { self.mode = Mode::Intent; }
+    }
+
+    fn move_pull_request_selection(&mut self, delta: i64) {
+        let rows = self.pull_request_rows();
+        if rows.is_empty() { return; }
+        let current = self.selected_pull_request_position().unwrap_or(0);
+        let next = (current as i64 + delta).clamp(0, rows.len() as i64 - 1) as usize;
+        self.pull_request.selected = Some(self.pull_request.items[rows[next]].number);
+        self.pull_request.error = None;
+    }
+
+    fn start_pull_request_load(&mut self) {
+        if self.pull_request_load.is_some() { return; }
+        let repo = self.repo.clone();
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || { let _ = sender.send(github::load_open_pull_requests(&repo)); });
+        self.pull_request_load = Some(PullRequestLoadTask { receiver });
+        self.pull_request.status = Some("Loading open pull requests…".into());
+        self.pull_request.error = None;
+    }
+
+    fn start_pull_request_prepare(&mut self) {
+        let Some(position) = self.selected_pull_request_position() else { return; };
+        let pr = self.pull_request.items[self.pull_request_rows()[position]].clone();
+        let Some(repository) = self.pull_request.repository.clone() else { return; };
+        let repo = self.repo.clone();
+        let number = pr.number;
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || { let _ = sender.send(github::prepare_pull_request(&repo, &repository, number)); });
+        self.pull_request_prepare = Some(PullRequestPrepareTask { receiver });
+        self.mode = Mode::PreparingPullRequest { number, title: pr.title };
+        self.pull_request.error = None;
     }
 
     fn handle_picker_key(&mut self, key: KeyEvent, picker: Picker) {
@@ -872,6 +1056,7 @@ impl App {
 fn recovery_mode(source: CreateSource) -> Mode {
     match source {
         CreateSource::ExistingPicker => Mode::ExistingPicker,
+        CreateSource::PullRequestPicker => Mode::PullRequestPicker,
         CreateSource::CurrentHeadName => Mode::Naming {
             target: NameTarget::CurrentHead,
         },
@@ -954,6 +1139,8 @@ mod tests {
             repo: PathBuf::from("."),
             head,
             branches,
+            launch_route: LaunchRoute::Create,
+            pull_request: PullRequestPickerState::default(),
             intent: Intent::OpenExisting,
             mode: Mode::Intent,
             existing: PickerMemory::default(),
@@ -965,6 +1152,8 @@ mod tests {
             status: None,
             error: None,
             fetch: None,
+            pull_request_load: None,
+            pull_request_prepare: None,
             create: None,
             creating_branch: None,
             done: false,
@@ -1028,7 +1217,10 @@ mod tests {
         let mut app = app(named_head("main"), default_branches());
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Down));
+        app.handle_key(key(KeyCode::Down));
         assert_eq!(app.intent, Intent::NewFromBase);
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.intent, Intent::OpenPullRequest);
         app.handle_key(key(KeyCode::Up));
         assert_eq!(app.intent, Intent::OpenExisting);
         app.handle_key(key(KeyCode::Up));
@@ -1045,6 +1237,7 @@ mod tests {
     #[test]
     fn intent_enter_starts_base_picker() {
         let mut app = app(named_head("main"), default_branches());
+        app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Enter));
@@ -1068,10 +1261,13 @@ mod tests {
         );
         assert!(!app.intent_enabled(Intent::NewFromHead));
         assert!(app.intent_enabled(Intent::OpenExisting));
+        assert!(app.intent_enabled(Intent::OpenPullRequest));
         assert!(app.intent_enabled(Intent::NewFromBase));
         assert_eq!(app.intent, Intent::OpenExisting);
         app.handle_key(key(KeyCode::Up));
         assert_eq!(app.intent, Intent::OpenExisting);
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.intent, Intent::OpenPullRequest);
         app.handle_key(key(KeyCode::Down));
         assert_eq!(app.intent, Intent::NewFromBase);
 
@@ -1085,11 +1281,12 @@ mod tests {
     }
 
     #[test]
-    fn unborn_disables_all_creation_outcomes() {
+    fn unborn_allows_only_pull_requests() {
         let mut app = app(HeadState::Unborn, default_branches());
         assert!(!app.intent_enabled(Intent::NewFromHead));
         assert!(!app.intent_enabled(Intent::OpenExisting));
         assert!(!app.intent_enabled(Intent::NewFromBase));
+        assert!(app.intent_enabled(Intent::OpenPullRequest));
         app.intent = Intent::NewFromHead;
         app.handle_key(key(KeyCode::Enter));
         assert_eq!(app.mode, Mode::Intent);
@@ -1170,6 +1367,7 @@ mod tests {
         let mut app = app(named_head("main"), branches);
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Down));
+        app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Enter));
         assert_eq!(app.mode, Mode::BasePicker);
         let rows = app.picker_rows(Picker::Base);
@@ -1192,6 +1390,7 @@ mod tests {
     #[test]
     fn base_picker_selects_remote_base() {
         let mut app = app(named_head("main"), default_branches());
+        app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Enter));
@@ -1327,6 +1526,7 @@ mod tests {
         let mut app = app(named_head("main"), default_branches());
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Down));
+        app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Enter));
         app.handle_key(key(KeyCode::Enter));
         assert_eq!(
@@ -1344,6 +1544,7 @@ mod tests {
     #[test]
     fn naming_base_selection_survives_escape_round_trip() {
         let mut app = app(named_head("main"), default_branches());
+        app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Down));
         app.handle_key(key(KeyCode::Enter));
@@ -1756,6 +1957,31 @@ mod tests {
         app.error = Some("invalid".into());
         app.handle_key(key(KeyCode::Backspace));
         assert!(app.error.is_none());
+    }
+
+    #[test]
+    fn pull_request_filter_preserves_number_selection() {
+        let mut app = app(named_head("main"), default_branches());
+        app.mode = Mode::PullRequestPicker;
+        app.pull_request.items = vec![
+            github::PullRequest { number: 12, title: "Fix login".into(), author: "sam".into(), head_label: "sam/login".into(), is_draft: false, updated_at: "2026-08-10T00:00:00Z".into() },
+            github::PullRequest { number: 34, title: "Docs".into(), author: "lee".into(), head_label: "lee/docs".into(), is_draft: true, updated_at: "2026-08-09T00:00:00Z".into() },
+        ];
+        app.pull_request.selected = Some(34);
+        app.handle_key(char_key('d'));
+        assert_eq!(app.pull_request_rows(), vec![1]);
+        assert_eq!(app.pull_request.selected, Some(34));
+        app.handle_key(key(KeyCode::Backspace));
+        assert_eq!(app.pull_request.selected, Some(34));
+    }
+
+    #[test]
+    fn direct_pull_request_escape_closes() {
+        let mut app = app(named_head("main"), default_branches());
+        app.launch_route = LaunchRoute::PullRequest;
+        app.mode = Mode::PullRequestPicker;
+        app.handle_key(key(KeyCode::Esc));
+        assert!(app.done);
     }
 
     #[test]

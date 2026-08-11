@@ -55,6 +55,10 @@ guided-worktree-creation QA (2026-08-08).
 - Notifications (`herdr notification show`) are not observable via CLI (only
   `show` exists) — verify success by popup close + git state, not the toast.
 
+## GitHub PR flow
+
+PR discovery/opening requires an authenticated `gh` only on that route: run `gh auth login` and use a checkout whose `origin` (or another local remote) exactly matches the GitHub repository. Verify both `herdr-worktree-picker.create` → *Open a GitHub PR* and `herdr-worktree-picker.open-pr`. Exercise a draft and a fork PR, search/filter, `Ctrl-R`, and confirm that each open creates a distinct `pr/<number>-…` branch with no upstream. For a stale/closed PR, opening must return to search with an actionable error; generated branches and `refs/herdr-worktree-picker/pulls/*` are intentionally cleaned up manually.
+
 ## Fixture (one-time)
 
 ```sh

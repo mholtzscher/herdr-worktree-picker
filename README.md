@@ -1,8 +1,8 @@
 # herdr-worktree-picker
 
-A small [Herdr](https://herdr.dev) plugin for creating and focusing worktrees from local branches, remote branches, the current `HEAD`, or another branch as the base.
+A small [Herdr](https://herdr.dev) plugin for creating and focusing worktrees from local branches, remote branches, GitHub pull requests, the current `HEAD`, or another branch as the base.
 
-The picker opens in a popup and starts with an intent menu: create a new branch from the current `HEAD`, open an existing branch, or create a new branch from another base. Every later screen has one purpose — search for a branch, search for a base, enter a branch name, resolve a remote-name conflict, or show creation progress — and each path remembers its own search, selection, and name draft while the popup is open.
+The picker opens in a popup and starts with an intent menu: create a new branch from the current `HEAD`, open an existing branch, open a GitHub PR, or create a new branch from another base. Every later screen has one purpose and remembers its state while the popup is open.
 
 ## Install
 
@@ -25,6 +25,8 @@ type = "plugin_action"
 command = "herdr-worktree-picker.create"
 description = "create worktree"
 ```
+
+For a direct PR search keybinding, use `command = "herdr-worktree-picker.open-pr"` in another `plugin_action` entry.
 
 Reload Herdr after editing the configuration:
 
@@ -55,7 +57,7 @@ Open the picker from a pane inside a Git repository.
 | `Enter` | Continue |
 | `Esc` | Close |
 
-The current branch is shown. On a detached `HEAD`, *New branch from current HEAD* is disabled; with no commits yet, all creation outcomes are disabled until you create a commit.
+The current branch is shown. On a detached `HEAD`, *New branch from current HEAD* is disabled; with no commits yet, only *Open a GitHub PR* remains available.
 
 **2. Follow the chosen path.**
 
@@ -65,6 +67,8 @@ The current branch is shown. On a detached `HEAD`, *New branch from current HEAD
 
 *New branch from another base* — pick a base (the current branch is excluded), then enter a branch name. A remote base creates a local branch that tracks that exact remote.
 
+*Open a GitHub PR* — requires an authenticated [`gh`](https://cli.github.com/) only for this flow (`gh auth login`). It asynchronously lists the 1,000 most recently updated open PRs, including drafts and fork PRs. Search matches PR number, title, author, and head branch. Opening a PR fetches the base repository pull ref, revalidates that it is open at the fetched commit, and creates a unique `pr/<number>-<title>` local branch with no upstream. Generated branches are disposable copies: pushing them does not update the PR, and cleanup is manual. The dedicated `herdr-worktree-picker.open-pr` action opens directly to this search.
+
 | Key | Screen | Action |
 |---|---|---|
 | `↑` / `↓` | Picker / conflict | Move selection (skips disabled rows) |
@@ -72,7 +76,7 @@ The current branch is shown. On a detached `HEAD`, *New branch from current HEAD
 | `Ctrl-R` | Picker | Fetch and prune all remotes (asynchronous) |
 | `Backspace` / `Ctrl-U` | Search or name | Delete the last character / clear the field |
 | `Enter` | Name | Validate the exact input and create |
-| `Esc` | Any screen | Back one step (or close from the intent menu) |
+| `Esc` | Any screen | Back one step (or close from the intent menu/direct PR route) |
 
 While a worktree is created, the popup shows the resolved branch and base and ignores all keys — `Esc` cannot cancel a partially completed Herdr command. On success the worktree is focused, a best-effort notification is shown, and the popup closes. If the worktree was created but the remote upstream could not be verified or repaired, the plugin warns and closes without offering a duplicate retry.
 
