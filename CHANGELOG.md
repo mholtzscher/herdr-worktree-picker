@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/mholtzscher/herdr-worktree-picker/compare/v1.0.0...v1.1.0) (2026-08-11)
+
+
+### Features
+
+* open worktrees from GitHub pull requests ([fc208e2](https://github.com/mholtzscher/herdr-worktree-picker/commit/fc208e2c276960469bb6b6793ea87da45e1c1e5f))
+
 ## [1.0.0](https://github.com/mholtzscher/herdr-worktree-picker/compare/v0.3.2...v1.0.0) (2026-08-08)
 
 
