@@ -2,7 +2,7 @@ id = "herdr-worktree-picker"
 name = "Herdr Worktree Picker"
 version = "1.0.0"
 min_herdr_version = "0.8.0"
-description = "Create worktrees from local or remote branches"
+description = "Create worktrees from branches or GitHub pull requests"
 platforms = ["linux", "macos"]
 
 [[build]]
@@ -13,6 +13,12 @@ id = "create"
 title = "Create worktree"
 contexts = ["workspace"]
 command = ["./target/release/herdr-worktree-picker", "open"]
+
+[[actions]]
+id = "open-pr"
+title = "Open GitHub PR"
+contexts = ["workspace"]
+command = ["./target/release/herdr-worktree-picker", "open-pr"]
 
 [[panes]]
 id = "picker"

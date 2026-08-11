@@ -6,6 +6,8 @@
 **Date:** 2026-08-08  
 **Supersedes:** [Single-Screen Worktree Picker](single-screen-worktree-picker.md)
 
+> GitHub PR opening extends this flow in [GitHub PR Worktrees](github-pr-worktrees.md).
+
 ## Problem statement
 
 Herdr users need to create and focus a worktree from one of three distinct intentions:

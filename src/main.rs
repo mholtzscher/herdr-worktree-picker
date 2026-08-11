@@ -1,10 +1,11 @@
 mod app;
 mod git;
+mod github;
 mod herdr;
 
 use std::{env, io, process::Command, time::Duration};
 
-use app::{App, BranchKind, Intent, Mode, Picker};
+use app::{App, BranchKind, Intent, LaunchRoute, Mode, Picker};
 use crossterm::{
     event::{self, Event},
     execute,
@@ -33,13 +34,14 @@ fn main() {
 
 fn run(command: &str) -> Result<(), String> {
     match command {
-        "open" => open_picker(),
+        "open" => open_picker(LaunchRoute::Create),
+        "open-pr" => open_picker(LaunchRoute::PullRequest),
         "picker" => run_picker(),
-        _ => Err("Usage: herdr-worktree-picker {open|picker}".into()),
+        _ => Err("Usage: herdr-worktree-picker {open|open-pr|picker}".into()),
     }
 }
 
-fn open_picker() -> Result<(), String> {
+fn open_picker(route: LaunchRoute) -> Result<(), String> {
     let herdr = env::var_os("HERDR_BIN_PATH").unwrap_or_else(|| "herdr".into());
     let plugin = env::var("HERDR_PLUGIN_ID").unwrap_or_else(|_| "herdr-worktree-picker".into());
     let mut command = Command::new(herdr);
@@ -54,6 +56,9 @@ fn open_picker() -> Result<(), String> {
     ]);
     if let Ok(pane_id) = env::var("HERDR_PANE_ID") {
         command.args(["--env", &format!("HERDR_SOURCE_PANE_ID={pane_id}")]);
+    }
+    if route == LaunchRoute::PullRequest {
+        command.args(["--env", "HERDR_WORKTREE_PICKER_ROUTE=pull-request"]);
     }
 
     let output = command.output().map_err(|error| error.to_string())?;
@@ -73,9 +78,14 @@ fn run_picker() -> Result<(), String> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(|error| error.to_string())?;
 
-    let mut app = match herdr::find_workspace_id(&herdr_bin).and_then(|workspace_id| {
-        git::find_repo(&herdr_bin).and_then(|repo| App::new(herdr_bin.clone(), workspace_id, repo))
-    }) {
+    let route = match env::var("HERDR_WORKTREE_PICKER_ROUTE").as_deref() {
+        Ok("") | Err(_) | Ok("create") => Ok(LaunchRoute::Create),
+        Ok("pull-request") => Ok(LaunchRoute::PullRequest),
+        Ok(value) => Err(format!("Invalid picker route: {value}")),
+    };
+    let mut app = match route.and_then(|route| herdr::find_workspace_id(&herdr_bin).and_then(|workspace_id| {
+        git::find_repo(&herdr_bin).and_then(|repo| App::new(herdr_bin.clone(), workspace_id, repo, route))
+    })) {
         Ok(app) => app,
         Err(error) => App::fatal(herdr_bin, error),
     };
@@ -137,6 +147,8 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         Mode::Intent => (" Create worktree ", vec![Line::default()]),
         Mode::ExistingPicker => (" Choose branch ", search_line(&app.existing.query)),
         Mode::BasePicker => (" Choose base ", search_line(&app.base_picker.query)),
+        Mode::PullRequestPicker => (" Open GitHub PR ", search_line(&app.pull_request.query)),
+        Mode::PreparingPullRequest { .. } => (" Preparing GitHub PR ", vec![Line::default()]),
         Mode::Naming { target } => (
             " Branch name ",
             vec![
@@ -170,6 +182,8 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
         Mode::Intent => draw_intent_body(frame, area, app),
         Mode::ExistingPicker => draw_picker_body(frame, area, app, Picker::Existing),
         Mode::BasePicker => draw_picker_body(frame, area, app, Picker::Base),
+        Mode::PullRequestPicker => draw_pull_request_body(frame, area, app),
+        Mode::PreparingPullRequest { number, title } => draw_preparing_pull_request_body(frame, area, *number, title),
         Mode::Naming { .. } => {}
         Mode::RemoteConflict => draw_conflict_body(frame, area, app),
         Mode::Creating => draw_creating_body(frame, area, app),
@@ -178,9 +192,10 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_intent_body(frame: &mut Frame, area: Rect, app: &App) {
-    const OUTCOMES: [(Intent, &str); 3] = [
+    const OUTCOMES: [(Intent, &str); 4] = [
         (Intent::NewFromHead, "New branch from current HEAD"),
         (Intent::OpenExisting, "Open an existing branch"),
+        (Intent::OpenPullRequest, "Open a GitHub PR"),
         (Intent::NewFromBase, "New branch from another base"),
     ];
     let mut lines = Vec::new();
@@ -288,6 +303,58 @@ fn draw_picker_body(frame: &mut Frame, area: Rect, app: &App, picker: Picker) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+fn draw_pull_request_body(frame: &mut Frame, area: Rect, app: &App) {
+    let rows = app.pull_request_rows();
+    if app.pull_request.items.is_empty() {
+        let message = if app.is_loading_pull_requests() {
+            "Resolving GitHub repository and loading open pull requests…".to_string()
+        } else if app.pull_request.query.is_empty() {
+            app.pull_request.repository.as_ref().map_or_else(
+                || "No open pull requests".to_string(),
+                |repo| format!("No open pull requests for {}", repo.name_with_owner),
+            )
+        } else { format!("No pull requests match “{}”", app.pull_request.query) };
+        frame.render_widget(
+            Paragraph::new(vec![Line::from(""), Line::from(message)])
+                .block(Block::default().borders(Borders::ALL)).wrap(Wrap { trim: true }), area,
+        );
+        return;
+    }
+    if rows.is_empty() {
+        frame.render_widget(
+            Paragraph::new(vec![Line::from(""), Line::from(format!("No pull requests match “{}”", app.pull_request.query))])
+                .block(Block::default().borders(Borders::ALL)), area,
+        );
+        return;
+    }
+    let items = rows.iter().map(|position| {
+        let pr = &app.pull_request.items[*position];
+        let draft = if pr.is_draft { "DRAFT  " } else { "" };
+        ListItem::new(vec![
+            Line::from(format!("{draft}#{} {}", pr.number, pr.title)),
+            Line::from(Span::styled(
+                format!("{}  {}  {}", pr.author, pr.head_label, github::display_date(&pr.updated_at)),
+                Style::default().fg(Color::DarkGray),
+            )),
+        ])
+    }).collect::<Vec<_>>();
+    let mut state = ListState::default().with_selected(app.selected_pull_request_position());
+    let list = List::new(items).block(Block::default().borders(Borders::ALL))
+        .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+        .highlight_symbol("› ");
+    frame.render_stateful_widget(list, area, &mut state);
+}
+
+fn draw_preparing_pull_request_body(frame: &mut Frame, area: Rect, number: u64, title: &str) {
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(format!("PR #{number}: {title}")), Line::from(""),
+            Line::from("Fetching and verifying latest head…"),
+            Line::from("Please wait; popup closes after worktree creation"),
+        ]).block(Block::default().borders(Borders::ALL)).wrap(Wrap { trim: true }), area,
+    );
+}
+
 fn draw_conflict_body(frame: &mut Frame, area: Rect, app: &App) {
     let Some(conflict) = &app.conflict else {
         return;
@@ -358,12 +425,15 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     let paragraph = match &app.mode {
         Mode::FatalError => Paragraph::new("Esc or Enter close")
             .style(Style::default().fg(Color::DarkGray)),
+        Mode::PreparingPullRequest { .. } => Paragraph::new("Preparing GitHub PR… please wait — Esc cannot cancel")
+            .style(Style::default().fg(Color::Yellow)),
         Mode::Creating => Paragraph::new("Creating worktree… please wait — Esc cannot cancel")
             .style(Style::default().fg(Color::Yellow)),
         Mode::Intent => Paragraph::new("Up/Down choose • Enter continue • Esc close")
             .style(Style::default().fg(Color::DarkGray)),
         Mode::ExistingPicker => picker_footer(app, Picker::Existing),
         Mode::BasePicker => picker_footer(app, Picker::Base),
+        Mode::PullRequestPicker => pull_request_footer(app),
         Mode::Naming { .. } => {
             if let Some(error) = &app.error {
                 Paragraph::new(error.as_str())
@@ -382,6 +452,23 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
         paragraph.block(Block::default().borders(Borders::ALL)),
         area,
     );
+}
+
+fn pull_request_footer(app: &App) -> Paragraph<'_> {
+    if let Some(error) = &app.pull_request.error {
+        return Paragraph::new(error.as_str()).style(Style::default().fg(Color::Red)).wrap(Wrap { trim: true });
+    }
+    if app.is_loading_pull_requests() || app.pull_request.status.is_some() {
+        return Paragraph::new(app.pull_request.status.as_deref().unwrap_or("Loading open pull requests…"))
+            .style(Style::default().fg(Color::Yellow));
+    }
+    let mut help = if app.pull_request_rows().is_empty() {
+        "Ctrl-R refresh • Esc back".to_string()
+    } else { "Enter open • Ctrl-R refresh • Esc back".to_string() };
+    if app.pull_request.truncated {
+        help = format!("Showing 1,000 most recently updated open PRs • {help}");
+    }
+    Paragraph::new(help).style(Style::default().fg(Color::DarkGray))
 }
 
 fn picker_footer(app: &App, picker: Picker) -> Paragraph<'_> {
@@ -443,6 +530,8 @@ mod tests {
             Mode::Intent,
             Mode::ExistingPicker,
             Mode::BasePicker,
+            Mode::PullRequestPicker,
+            Mode::PreparingPullRequest { number: 1, title: "test".into() },
             Mode::RemoteConflict,
             Mode::Creating,
             Mode::FatalError,

@@ -159,11 +159,72 @@ pub(crate) fn validate_branch_name(repo: &Path, name: &str) -> Result<(), String
 
 pub(crate) fn validate_new_branch_name(repo: &Path, name: &str) -> Result<(), String> {
     validate_branch_name(repo, name)?;
-    if local_branch_exists(repo, name) {
+    if local_branch_exists(repo, name)? {
         Err(format!("Branch “{name}” already exists locally"))
     } else {
         Ok(())
     }
+}
+
+/// Finds the local remote that names this GitHub repository. Matching is exact
+/// on host and case-insensitive on owner/repository; an unrelated remote is
+/// never used for PR pull refs.
+pub(crate) fn find_github_remote(
+    repo: &Path,
+    host: &str,
+    name_with_owner: &str,
+) -> Result<String, String> {
+    let mut matches = Vec::new();
+    for remote in run_git(repo, &["remote"])?.lines() {
+        let url = run_git(repo, &["remote", "get-url", remote])?;
+        if remote_url_identity(&url).is_some_and(|(url_host, name)| {
+            url_host.eq_ignore_ascii_case(host) && name.eq_ignore_ascii_case(name_with_owner)
+        }) {
+            matches.push(remote.to_owned());
+        }
+    }
+    matches.sort();
+    if let Some(origin) = matches.iter().find(|remote| remote.as_str() == "origin") {
+        return Ok(origin.clone());
+    }
+    matches.into_iter().next().ok_or_else(|| {
+        format!("No local remote matches {host}/{name_with_owner}; add a remote for that repository.")
+    })
+}
+
+/// Fetches the base repository's PR head into a private ref, avoiding shared
+/// FETCH_HEAD state, and returns its full object ID.
+pub(crate) fn fetch_pull_head(repo: &Path, remote: &str, number: u64) -> Result<String, String> {
+    let reference = format!("refs/herdr-worktree-picker/pulls/{number}/head");
+    let source = format!("+refs/pull/{number}/head:{reference}");
+    run_git(repo, &["fetch", "--no-tags", remote, &source])?;
+    run_git(repo, &["rev-parse", &reference])
+}
+
+pub(crate) fn local_branch_exists(repo: &Path, branch: &str) -> Result<bool, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")])
+        .output()
+        .map_err(|error| error.to_string())?;
+    Ok(output.status.success())
+}
+
+fn remote_url_identity(url: &str) -> Option<(String, String)> {
+    let url = url.trim().trim_end_matches('/');
+    let (host, path) = if let Some((_, rest)) = url.split_once("://") {
+        let rest = rest.split_once('@').map_or(rest, |(_, rest)| rest);
+        rest.split_once('/')?
+    } else if let Some((host, path)) = url.split_once(':') {
+        (host.split_once('@').map_or(host, |(_, host)| host), path)
+    } else { return None; };
+    let name = path.trim_matches('/').trim_end_matches(".git");
+    let mut parts = name.split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    if parts.next().is_some() || owner.is_empty() || repo.is_empty() { return None; }
+    Some((host.to_owned(), format!("{owner}/{repo}")))
 }
 
 /// Resolves a remote-derived request. New local branches created from a remote
@@ -269,20 +330,6 @@ fn load_worktrees(repo: &Path) -> Result<HashMap<String, PathBuf>, String> {
     Ok(worktrees)
 }
 
-fn local_branch_exists(repo: &Path, branch: &str) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args([
-            "show-ref",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{branch}"),
-        ])
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
 fn run_git(repo: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
         .arg("-C")
@@ -328,6 +375,31 @@ mod tests {
         git(repo.path(), &["add", "file"]);
         git(repo.path(), &["commit", "-m", "initial"]);
         Some(repo)
+    }
+
+    #[test]
+    fn recognizes_common_github_remote_urls() {
+        for url in [
+            "https://github.com/Owner/Repo.git",
+            "git@github.com:Owner/Repo.git",
+            "ssh://git@github.com/Owner/Repo.git",
+        ] {
+            assert_eq!(remote_url_identity(url), Some(("github.com".into(), "Owner/Repo".into())));
+        }
+    }
+
+    #[test]
+    fn finds_matching_github_remote_and_prefers_origin() {
+        let Some(repo) = repo() else {
+            return;
+        };
+        git(repo.path(), &["remote", "add", "upstream", "https://github.com/owner/repo.git"]);
+        git(repo.path(), &["remote", "add", "origin", "git@github.com:OWNER/REPO.git"]);
+
+        assert_eq!(
+            find_github_remote(repo.path(), "github.com", "owner/repo"),
+            Ok("origin".into())
+        );
     }
 
     #[test]
@@ -385,7 +457,7 @@ mod tests {
                 .unwrap()
                 .checked_out_at
                 .as_deref(),
-            Some(worktree.as_path())
+            Some(worktree.canonicalize().unwrap().as_path())
         );
         assert!(branches
             .iter()
