@@ -49,7 +49,7 @@ The public action ID changed from `herdr-worktree-picker.open` to `herdr-worktre
 
 Open the picker from a pane inside a Git repository.
 
-**1. Choose an outcome.** The default selection is *Open an existing branch*; `Enter` continues.
+**1. Choose an outcome.** The default selection follows the checkout context: *New branch from another base* in a linked worktree, *New branch from current HEAD* in the primary checkout, *Open an existing branch* when the primary checkout has a detached `HEAD`, or *Open a GitHub PR* when the repository has no commits; `Enter` continues.
 
 | Key | Action |
 |---|---|

@@ -47,6 +47,28 @@ pub(crate) fn find_repo(herdr_bin: &OsString) -> Result<PathBuf, String> {
     Ok(PathBuf::from(output.trim()))
 }
 
+/// A linked worktree has its own Git metadata directory under the repository's
+/// common metadata directory. The primary checkout uses the common directory.
+pub(crate) fn is_linked_worktree(repo: &Path) -> Result<bool, String> {
+    let paths = run_git(
+        repo,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-dir",
+            "--git-common-dir",
+        ],
+    )?;
+    let mut paths = paths.lines();
+    let git_dir = paths
+        .next()
+        .ok_or_else(|| "Git did not return its metadata directory".to_string())?;
+    let common_dir = paths
+        .next()
+        .ok_or_else(|| "Git did not return its common metadata directory".to_string())?;
+    Ok(git_dir != common_dir)
+}
+
 /// Distinguishes a named branch, a detached commit, and an unborn repository.
 /// `HEAD` must resolve to a commit before the symbolic-ref check runs.
 pub(crate) fn load_head(repo: &Path) -> Result<HeadState, String> {
@@ -384,7 +406,10 @@ mod tests {
             "git@github.com:Owner/Repo.git",
             "ssh://git@github.com/Owner/Repo.git",
         ] {
-            assert_eq!(remote_url_identity(url), Some(("github.com".into(), "Owner/Repo".into())));
+            assert_eq!(
+                remote_url_identity(url),
+                Some(("github.com".into(), "Owner/Repo".into()))
+            );
         }
     }
 
@@ -393,13 +418,45 @@ mod tests {
         let Some(repo) = repo() else {
             return;
         };
-        git(repo.path(), &["remote", "add", "upstream", "https://github.com/owner/repo.git"]);
-        git(repo.path(), &["remote", "add", "origin", "git@github.com:OWNER/REPO.git"]);
+        git(
+            repo.path(),
+            &[
+                "remote",
+                "add",
+                "upstream",
+                "https://github.com/owner/repo.git",
+            ],
+        );
+        git(
+            repo.path(),
+            &["remote", "add", "origin", "git@github.com:OWNER/REPO.git"],
+        );
 
         assert_eq!(
             find_github_remote(repo.path(), "github.com", "owner/repo"),
             Ok("origin".into())
         );
+    }
+
+    #[test]
+    fn distinguishes_primary_checkout_from_linked_worktree() {
+        let Some(repo) = repo() else {
+            return;
+        };
+        let worktree = repo.path().join("linked-worktree");
+        git(repo.path(), &["branch", "feature/linked"]);
+        git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                worktree.to_str().unwrap(),
+                "feature/linked",
+            ],
+        );
+
+        assert!(!is_linked_worktree(repo.path()).unwrap());
+        assert!(is_linked_worktree(&worktree).unwrap());
     }
 
     #[test]
