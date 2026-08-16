@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0](https://github.com/mholtzscher/herdr-worktree-picker/compare/v1.1.0...v1.2.0) (2026-08-16)
+
+
+### Features
+
+* choose initial intent from checkout context ([dae4f43](https://github.com/mholtzscher/herdr-worktree-picker/commit/dae4f4305a1419f9af8cf09037bfc044219a253a))
+* choose initial intent from checkout context ([d58b47a](https://github.com/mholtzscher/herdr-worktree-picker/commit/d58b47aed337635c70c4c3163fe69491f4e21e31))
+
 ## [1.1.0](https://github.com/mholtzscher/herdr-worktree-picker/compare/v1.0.0...v1.1.0) (2026-08-11)
 
 

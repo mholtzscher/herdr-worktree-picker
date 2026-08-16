@@ -10,7 +10,7 @@ Requires Herdr 0.8.0 or newer and a Rust toolchain:
 
 <!-- x-release-please-start-version -->
 ```sh
-herdr plugin install mholtzscher/herdr-worktree-picker --ref v1.1.0
+herdr plugin install mholtzscher/herdr-worktree-picker --ref v1.2.0
 ```
 <!-- x-release-please-end -->
 
