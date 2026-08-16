@@ -32,12 +32,12 @@ The replacement flow asks for the intended outcome first. Every later screen has
 
 ### Start: choose an outcome
 
-Every invocation opens the intent menu. The default selection is **Open an existing branch**.
+Every invocation opens the intent menu. The default selection follows the checkout context: **New branch from another base** in a linked worktree, **New branch from current HEAD** in the primary checkout, **Open an existing branch** when the primary checkout has a detached `HEAD`, or **Open a GitHub PR** when the repository has no commits.
 
 ```text
  Create worktree ─────────────────────────────────────────
-   New branch from current HEAD
- › Open an existing branch
+ › New branch from current HEAD
+   Open an existing branch
    New branch from another base
 
  Current branch: main
@@ -511,7 +511,7 @@ impl App {
 }
 ```
 
-`App::new` loads both `HeadState` and branches and selects `Intent::OpenExisting`. `App` owns:
+`App::new` loads `HeadState`, branches, and whether the checkout is a linked worktree, then selects the context-appropriate intent. `App` owns:
 
 - screen transitions and one-step Back behavior;
 - per-path memory;
@@ -567,7 +567,7 @@ No new source module is required. The current `app`/`git`/`herdr` split already 
 
 ### Guided structure
 
-- [ ] Every invocation starts on the intent menu with Open an existing branch selected.
+- [ ] Every invocation starts on the intent menu with the context-appropriate outcome selected.
 - [ ] The single-screen `NEW` row, no-match creation affordance, and `Ctrl-N` mode switch are removed.
 - [ ] Each picker search and each branch-name field has one stable purpose.
 - [ ] Back returns exactly one step and retains independent state for each path.

@@ -264,6 +264,18 @@ pub(crate) struct App {
     pub(crate) done: bool,
 }
 
+fn initial_intent(head: &HeadState, is_linked_worktree: bool) -> Intent {
+    if matches!(head, HeadState::Unborn) {
+        Intent::OpenPullRequest
+    } else if is_linked_worktree {
+        Intent::NewFromBase
+    } else if matches!(head, HeadState::Branch { .. }) {
+        Intent::NewFromHead
+    } else {
+        Intent::OpenExisting
+    }
+}
+
 impl App {
     pub(crate) fn new(
         herdr: OsString,
@@ -274,6 +286,7 @@ impl App {
         let head = git::load_head(&repo)?;
         let branches = git::load_branches(&repo)?;
         let direct_pr = launch_route == LaunchRoute::PullRequest;
+        let intent = initial_intent(&head, git::is_linked_worktree(&repo)?);
         let mut app = Self {
             herdr,
             workspace_id,
@@ -282,7 +295,7 @@ impl App {
             branches,
             launch_route,
             pull_request: PullRequestPickerState::default(),
-            intent: Intent::OpenExisting,
+            intent,
             mode: if direct_pr { Mode::PullRequestPicker } else { Mode::Intent },
             existing: PickerMemory::default(),
             base_picker: PickerMemory::default(),
@@ -1133,6 +1146,7 @@ mod tests {
     }
 
     fn app(head: HeadState, branches: Vec<Branch>) -> App {
+        let intent = initial_intent(&head, false);
         App {
             herdr: "herdr-test-missing".into(),
             workspace_id: "w1".into(),
@@ -1141,7 +1155,7 @@ mod tests {
             branches,
             launch_route: LaunchRoute::Create,
             pull_request: PullRequestPickerState::default(),
-            intent: Intent::OpenExisting,
+            intent,
             mode: Mode::Intent,
             existing: PickerMemory::default(),
             base_picker: PickerMemory::default(),
@@ -1169,6 +1183,7 @@ mod tests {
     }
 
     fn open_existing(app: &mut App) {
+        app.intent = Intent::OpenExisting;
         app.handle_key(key(KeyCode::Enter));
         assert_eq!(app.mode, Mode::ExistingPicker);
     }
@@ -1196,10 +1211,27 @@ mod tests {
     }
 
     #[test]
-    fn starts_on_intent_with_open_existing() {
+    fn primary_checkout_starts_on_new_from_head() {
         let app = app(named_head("main"), default_branches());
         assert_eq!(app.mode, Mode::Intent);
-        assert_eq!(app.intent, Intent::OpenExisting);
+        assert_eq!(app.intent, Intent::NewFromHead);
+    }
+
+    #[test]
+    fn linked_worktree_starts_on_new_from_base() {
+        assert_eq!(
+            initial_intent(&named_head("feature/current"), true),
+            Intent::NewFromBase
+        );
+        assert_eq!(
+            initial_intent(
+                &HeadState::Detached {
+                    commit: "0123456789abcdef".into(),
+                },
+                true,
+            ),
+            Intent::NewFromBase
+        );
     }
 
     #[test]
@@ -1283,6 +1315,7 @@ mod tests {
     #[test]
     fn unborn_allows_only_pull_requests() {
         let mut app = app(HeadState::Unborn, default_branches());
+        assert_eq!(app.intent, Intent::OpenPullRequest);
         assert!(!app.intent_enabled(Intent::NewFromHead));
         assert!(!app.intent_enabled(Intent::OpenExisting));
         assert!(!app.intent_enabled(Intent::NewFromBase));
